@@ -30,9 +30,15 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/bigpan
+          # 标签策略（一条提交可产出多个标签，便于飞牛/OS 面板按版本号选择）：
+          #   打 tag v1.0.1  →  1.0.1（精确版本）+ 1.0（滚动小版本）+ v1.0.1（tag 原名）
+          #   push main    →  latest（永远指向最新代码）
+          #   另外始终带一个 sha-xxxxxxx，可精确回滚到某次提交。
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
       - name: Build and push
