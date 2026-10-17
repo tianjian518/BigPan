@@ -1,7 +1,7 @@
 # 运行时数据（含账号凭证，绝不提交）
-data/
-bigpan-data/
-strm/
+/data/
+/bigpan-data/
+/strm/
 items.json
 accounts.json
 shares.json
