@@ -31,6 +31,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -44,15 +45,28 @@ const (
 	m139TTL  = 6 * time.Hour // 签名 8 小时，留余量
 )
 
-// m139LinkRe 识别移动云盘分享链接：yun.139.com/shareweb/#/w/i/{key} 等。
-var m139LinkRe = regexp.MustCompile(`139\.com/shareweb/#/[a-z]/[a-z]/([0-9A-Za-z_-]+)`)
+// m139LinkRe 识别移动云盘分享链接：yun.139.com/shareweb/#/w/i/{key}?pwd=xxx
+// 注意 pwd 跟在 `#` 之后的 fragment 里，必须单独抓，否则 ListShareFiles 传空串
+// 会被百度...（移动）判「提取码非法 errno=9188」而解析失败。
+var m139LinkRe = regexp.MustCompile(`139\.com/shareweb/#/[a-z]/[a-z]/([0-9A-Za-z_-]+)(?:\?([0-9A-Za-z_=&-]*))?`)
 
-func parse139Link(link string) (key string, err error) {
+func parse139Link(link string) (key string, passcode string, err error) {
 	m := m139LinkRe.FindStringSubmatch(link)
 	if m == nil {
-		return "", fmt.Errorf("不是移动云盘分享链接")
+		return "", "", fmt.Errorf("不是移动云盘分享链接")
 	}
-	return m[1], nil
+	// 从 query 段（?pwd=xxx 或 ?password=xxx）里抠提取码
+	if m[2] != "" {
+		q, qerr := url.ParseQuery(m[2])
+		if qerr == nil {
+			for _, k := range []string{"pwd", "password", "pwd_id", "code"} {
+				if v := q.Get(k); v != "" {
+					return m[1], v, nil
+				}
+			}
+		}
+	}
+	return m[1], "", nil
 }
 
 // m139Client 一个登录态的移动云盘客户端。
@@ -365,15 +379,20 @@ func (m139Provider) ListShareFiles(link string) (ShareInfo, error) {
 	if c == nil {
 		return ShareInfo{}, fmt.Errorf("还没有导入移动云盘凭证（139 解析/取流都需要登录），请到「账号与接入」导入")
 	}
-	key, err := parse139Link(link)
+	// 【2026-10-17 修复「带提取码的 139 分享解析失败」】
+	// 原来这里把提取码硬编码成 ""，移动云盘对带码分享一律返回
+	// 「提取码非法 errno=9188」→ 前端只看到「解析失败」，看不出原因。
+	// 现在从链接里把 pwd 抠出来，链接里没有时再用前端「提取码」输入框的值
+	// （share.go 的 mergeSharePwd 已把它拼到链接末尾）。
+	key, passcode, err := parse139Link(link)
 	if err != nil {
 		return ShareInfo{}, err
 	}
-	title := c.shareTitle(key, "")
+	title := c.shareTitle(key, passcode)
 	if title == "" {
 		title = key
 	}
-	_, files, err := scan139Share(c, key, "")
+	_, files, err := scan139Share(c, key, passcode)
 	if err != nil {
 		return ShareInfo{}, err
 	}
@@ -381,6 +400,7 @@ func (m139Provider) ListShareFiles(link string) (ShareInfo, error) {
 		Provider: m139Acct,
 		Title:    title,
 		ShareID:  key,
+		Passcode: passcode,
 		Files:    files,
 		Logged:   true,
 	}, nil
