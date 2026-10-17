@@ -312,10 +312,17 @@ func escapePath(p string) string {
 	return strings.Join(segs, "/")
 }
 
-// buildSTRM 全量重建 STRM 目录树，返回生成数量。
+// buildSTRM 增量同步 STRM 目录树，返回写入（新增+更新）的文件数。
 //
-// 清理策略：只删「自身或子树里含 .strm 的目录」以及根下的 .strm 文件，
-// 不碰 strmRoot 以外的任何东西；用户若往该目录塞了别的文件也不会误删。
+// 【2026-10-18 全量改增量】旧实现是 cleanSTRM 删光所有 .strm 再全写一遍：
+// 每追更出一集新剧，整个库的文件全部换 inode/mtime，飞牛影视会把全部片子
+// 当成「新内容」重新刮削（重新拉元数据、重新匹配、重新生成封面）。库小无
+// 所谓，几万部时能把服务器和 TMDB 一起拖垮。现在按「期望集合 vs 磁盘实况」
+// 做差量：内容不一致的才写，多出来的才删，其余原样不动（mtime 不变，媒体
+// 服务器根本感知不到）——追更新集只落 1 个新文件，飞牛只刮削这一集。
+//
+// 清理策略不变：只删 .strm 及因此变空的目录，不碰 strmRoot 以外的任何东西，
+// 用户塞进该目录的其他文件不会误删；改名/挪目录/删片依旧自动同步（自愈）。
 func buildSTRM(store *Store, self string) (int, error) {
 	items := store.List()
 	root := strmRootDir()
@@ -323,11 +330,10 @@ func buildSTRM(store *Store, self string) (int, error) {
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return 0, fmt.Errorf("建目录失败: %w", err)
 	}
-	if err := cleanSTRM(root); err != nil {
-		return 0, fmt.Errorf("清理旧 strm 失败: %w", err)
-	}
 
-	n, failed, skipped := 0, 0, 0
+	// ① 期望集合：绝对路径 → 应写内容（布局/过滤/命名规则与旧版完全一致）
+	want := make(map[string]string, len(items))
+	skipped := 0
 	for i := range items {
 		it := &items[i]
 		if it.Provider == "" && it.URL == "" {
@@ -341,33 +347,15 @@ func buildSTRM(store *Store, self string) (int, error) {
 		if sub := strmItemDir(it); sub != "" {
 			dir = filepath.Join(root, filepath.FromSlash(sub))
 		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			log.Printf("[strm] 建目录失败 %s: %v", dir, err)
-			failed++
-			continue
-		}
 		name := it.FileName() + ".strm"
 		// 不写末尾换行：部分媒体服务器解析 strm 时对空行敏感，纯 URL 最稳。
-		content := itemPlayURL(it, self)
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
-			log.Printf("[strm] 写文件失败 %s: %v", name, err)
-			failed++
-			continue
-		}
-		n++
+		want[filepath.Join(dir, name)] = itemPlayURL(it, self)
 	}
-	// 目录权限统一放宽：SmartStrm 踩过的坑 —— 媒体服务进程用户不同，
-	// 700 的目录会让飞牛影视完全读不到。
-	fixPerms(root)
-	log.Printf("[strm] 重建完成：%d 个 .strm（失败 %d，按配置跳过 %d），非夸克一律 302 直连，根目录 %s，对外地址 %s，层级 %s",
-		n, failed, skipped, root, strmPublicBase(self), strmCfg.Layout)
-	return n, nil
-}
 
-// cleanSTRM 只删 .strm 文件与因此变空的目录，其他内容一律保留。
-func cleanSTRM(root string) error {
+	// ② 磁盘实况：现有 .strm 路径集合（顺带记下目录，供删空目录用）
+	have := make(map[string]bool)
 	var dirs []string
-	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // 单个条目出错不影响整体
 		}
@@ -378,37 +366,73 @@ func cleanSTRM(root string) error {
 			return nil
 		}
 		if strings.HasSuffix(strings.ToLower(info.Name()), ".strm") {
-			_ = os.Remove(p)
+			have[p] = true
 		}
 		return nil
 	})
-	if err != nil {
-		return err
+
+	// ③ 删孤儿：盘上有、期望里没有的（失效分享清理/删条目/改名的旧文件）
+	del := 0
+	for p := range have {
+		if _, ok := want[p]; !ok {
+			if os.Remove(p) == nil {
+				del++
+			}
+		}
 	}
-	// 自下而上删空目录（含只剩空子目录的）
+
+	// ④ 写差量：不存在或内容不一致才落盘；已一致的跳过（mtime 原样保留）
+	added, updated, failed := 0, 0, 0
+	for p, content := range want {
+		if b, err := os.ReadFile(p); err == nil && string(b) == content {
+			continue
+		}
+		existed := have[p]
+		d := filepath.Dir(p)
+		if err := os.MkdirAll(d, 0755); err != nil {
+			log.Printf("[strm] 建目录失败 %s: %v", d, err)
+			failed++
+			continue
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			log.Printf("[strm] 写文件失败 %s: %v", p, err)
+			failed++
+			continue
+		}
+		// 属主/权限只修本次动过的：fnOS 的 mediasrv 以 admin:Users(1000:1001)
+		// 运行，root 属主 + 700 会读不到（SmartStrm 踩过的坑）。没动过的文件
+		// 上次已经修过，再全库 chown 一遍纯属浪费——十万级文件时那是几万次
+		// 系统调用，正是要避免的。
+		fixPathPerms(p, d)
+		if existed {
+			updated++
+		} else {
+			added++
+		}
+	}
+
+	// ⑤ 删因此变空的目录（自下而上，含只剩空子目录的）
 	for i := len(dirs) - 1; i >= 0; i-- {
-		ents, err := os.ReadDir(dirs[i])
-		if err == nil && len(ents) == 0 {
+		if ents, err := os.ReadDir(dirs[i]); err == nil && len(ents) == 0 {
 			_ = os.Remove(dirs[i])
 		}
 	}
-	return nil
+
+	log.Printf("[strm] 同步完成：新增 %d、更新 %d、删除 %d、未动 %d（按配置跳过 %d，失败 %d），非夸克一律 302 直连，根目录 %s，对外地址 %s，层级 %s",
+		added, updated, del, len(have)-del-updated, skipped, failed, root, strmPublicBase(self), strmCfg.Layout)
+	return added + updated, nil
 }
 
-// fixPerms 目录 755、文件 644，并把属主改为 fnOS 的 admin:Users(1000:1001)。
-// 媒体服务（飞牛影视 mediasrv）通常以普通用户运行，root 属主 + 700 会直接读不到
-// （SmartStrm 踩过同样的坑）。chown 失败（非 root 运行）忽略即可，权限位仍有效。
-func fixPerms(root string) {
-	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
+// fixPathPerms 把单个 .strm 文件及其上级目录（直到 root）修到
+// 755/644 + admin:Users(1000:1001)，供 fnOS mediasrv 读取。
+func fixPathPerms(file, dir string) {
+	_ = os.Chown(file, 1000, 1001)
+	_ = os.Chmod(file, 0644)
+	for d := dir; ; d = filepath.Dir(d) {
+		_ = os.Chown(d, 1000, 1001)
+		_ = os.Chmod(d, 0755)
+		if filepath.Dir(d) == d {
+			break // 到达文件系统根，停（防御，正常应在 strmRoot 停）
 		}
-		_ = os.Chown(p, 1000, 1001)
-		if info.IsDir() {
-			_ = os.Chmod(p, 0755)
-		} else {
-			_ = os.Chmod(p, 0644)
-		}
-		return nil
-	})
+	}
 }
