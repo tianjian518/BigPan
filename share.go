@@ -780,7 +780,7 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 }
 
 // apiShareRefresh 追更刷新（手动）：重扫分享目录树，增量加入新文件。
-func apiShareRefresh(store *Store) http.HandlerFunc {
+func apiShareRefresh(store *Store, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -802,6 +802,14 @@ func apiShareRefresh(store *Store) http.HandlerFunc {
 		if err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
+		}
+		// 有新集才重建 STRM，规矩与定时刷新一致（见 autoRefreshCycle）：
+		// buildSTRM 是全量重写，没新集就别折腾磁盘。
+		// 【2026-10-18 修缺口】此前手动刷新只入库不重建——新集进了数据库却
+		// 没有 .strm 文件，飞牛影视根本看不到；而下一轮定时刷新这部剧已
+		// 没有新集（added=0），照样不重建，新集就一直缺着。
+		if added > 0 {
+			rebuildSTRMAsync(store, self, "手动刷新")
 		}
 		writeJSON(w, map[string]interface{}{"ok": true, "total": total, "added": added, "show": show})
 	}

@@ -1313,7 +1313,7 @@ func main() {
 	mux.HandleFunc("/api/shares/toggle", requireAuth(apiShareToggle(store)))
 	mux.HandleFunc("/api/shares/", requireAuth(apiShareDelete(store)))
 	mux.HandleFunc("/api/shows/delete", requireAuth(apiShowDelete(store, self)))
-	mux.HandleFunc("/api/shares/refresh", requireAuth(apiShareRefresh(store)))
+	mux.HandleFunc("/api/shares/refresh", requireAuth(apiShareRefresh(store, self)))
 	// 分享失效巡检：GET 看最近一轮结果，POST 立即全量扫一轮
 	mux.HandleFunc("/api/shares/health", requireAuth(apiShareHealth(store, self)))
 	// 人工确认失效：立即清理该分享（不等巡检两轮）
