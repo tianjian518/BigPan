@@ -945,17 +945,31 @@ function toggleView(){
   paintLib();
 }
 // ---- 播放 ----
+// 网页播放器只对夸克有意义（/play 中转，见备忘录 §23.30）。
+// 百度/移动/天翼按 302 铁律直连网盘，浏览器侧无解：百度按 UA 白名单拦截
+// （403 hit black userlist / hit illeage dlna）、移动只给 HLS m3u8、
+// 片源还常是 MKV/H.265。硬拼 /play 不仅必然失败，失败前还会把视频流量
+// 漏进服务器——所以直接给明确提示，别让用户对着黑屏转圈。
+var PVHINT=false;
 function openPlayer(id){
   var it=null;
   for(var i=0;i<ITEMS.length;i++){if(ITEMS[i].id===id)it=ITEMS[i]}
   if(!it)return;
   CURID=id;$('pvName').textContent=(it.dir?it.dir+'/':'')+(it.title||'')+(it.ext||'');
+  $('player').style.display='flex';$('pvmsg').style.display='flex';
+  if(it.provider&&it.provider!=='quark'&&!it.url){
+    PVHINT=true;
+    $('pv').removeAttribute('src');try{$('pv').load()}catch(e){}
+    $('pvmsg').innerHTML='<b>'+(PVCN[it.provider]||it.provider)+'不能在网页里播放</b><br><small>直链只认播放器，浏览器会被网盘拒绝，这是正常现象。<br>请用飞牛影视 / Emby 通过 STRM 或 WebDAV 观看，<br>或点上方「复制直链」给外部播放器使用。</small>';
+    return;
+  }
+  PVHINT=false;
   $('pvmsg').innerHTML='<span class="spin"></span>加载中…';
-  $('pvmsg').style.display='flex';
-  $('pv').src='/play?id='+id;$('player').style.display='flex';
+  $('pv').src='/play?id='+id;
 }
-function closePlayer(){$('pv').pause();$('pv').src='';$('player').style.display='none'}
+function closePlayer(){PVHINT=false;$('pv').pause();$('pv').src='';$('player').style.display='none'}
 $('pv').addEventListener('error',function(){
+  if(PVHINT)return;
   $('pvmsg').innerHTML='加载失败<br><small>可能是取流链接过期或网盘限流，稍后重试；持续失败就去「设置」重新导入凭证</small>';
   $('pvmsg').style.display='flex';
 });
