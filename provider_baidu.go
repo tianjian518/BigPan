@@ -89,8 +89,8 @@ type baiduWxFile struct {
 	FsID           flexStr `json:"fs_id"` // ⚠️ 根目录项是字符串、子目录文件项是数字，必须柔性类型
 	Path           string  `json:"path"`
 	ServerFilename string  `json:"server_filename"`
-	Size           flexStr `json:"size"`        // 同样可能数字/字符串混用
-	IsDir          flexStr `json:"isdir"`       // "1"=目录 "0"=文件
+	Size           flexStr `json:"size"`         // 同样可能数字/字符串混用
+	IsDir          flexStr `json:"isdir"`        // "1"=目录 "0"=文件
 	ServerMtime    flexStr `json:"server_mtime"` // 可能数字
 }
 
@@ -114,7 +114,7 @@ type baiduTransferResp struct {
 	ErrMsg  string `json:"err_msg"`
 	ShowMsg string `json:"show_msg"` // 200025 等的说明文字在这里（err_msg 常为空）
 	TaskID  int64  `json:"task_id"`
-	Info   []struct {
+	Info    []struct {
 		FsID           flexStr `json:"fs_id"` // 不同版本接口可能返回字符串或数字，柔性兼容
 		Path           string  `json:"path"`
 		ServerFilename string  `json:"server_filename"`
@@ -254,9 +254,10 @@ func baiduVerify(surFull, pwd string) (randsk string, err error) {
 }
 
 // baiduWxList 调新版分享列表接口。
-//   randsk：verify 拿到的 randsk（为空表示无提取码分享）
-//   surFull：带前导1的完整 surl（shorturl 参数）
-//   root=1 列分享根（dir 忽略）；root=0 需传精确 dir
+//
+//	randsk：verify 拿到的 randsk（为空表示无提取码分享）
+//	surFull：带前导1的完整 surl（shorturl 参数）
+//	root=1 列分享根（dir 忽略）；root=0 需传精确 dir
 func baiduWxList(randsk, surFull, pwd, dir string, root string) (*baiduWxListResp, error) {
 	form := url.Values{}
 	form.Set("shorturl", surFull)
@@ -447,7 +448,57 @@ func (baiduProvider) RefreshShare(shareID, passcode string) (string, []ShareFile
 // 【盒子实测】必须用长期存在的平级目录：新建子目录后立即 transfer+mediainfo 会因
 // 后端同步延迟报 errno=31023（文件未就绪）；/bigpan_tmp 一直存在，无此问题。
 // 重名问题靠「查重复用 + ondup=newcopy 的 (1) 后缀」解决，不再用 per-fs_id 子目录。
+// baiduDirExists 查某目录是否存在（baiduTmpBase 这类固定目录用）。
+//
+// 【2026-10-17 修复「根目录堆了 742 个临时目录」】
+// 原来的 baiduEnsureTmpDir 无条件调 create（a=commit + logid），百度在
+// logid 不同的时候会当成新目录，于是每播一集就在根目录留一个
+// bigpan_tmp_20261017_HHMMSS。实测一天堆到742 个，而启动清理只扫
+// baiduTmpBase 与 baiduTmpBaseLegacy 两个固定名，这些带时间戳的目录
+// 既扫不到也删不掉，纯垃圾。
+//
+// 现在改成：先确认目录在不在，在就直接返回，不再 create。目录不存在时
+// 才建一次，之后永久复用。
+func baiduDirExists(cookie, dir string) bool {
+	q := url.Values{}
+	q.Set("dir", dir)
+	q.Set("num", "1")
+	q.Set("clienttype", "0")
+	q.Set("web", "1")
+	q.Set("app_id", "250528")
+	req, _ := http.NewRequest(http.MethodGet, "https://pan.baidu.com/api/list?"+q.Encode(), nil)
+	req.Header.Set("User-Agent", baiduNetUA)
+	req.Header.Set("Referer", "https://pan.baidu.com/")
+	req.Header.Set("Cookie", cookie)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var r struct {
+		Errno int64 `json:"errno"`
+		List  []struct {
+			Path string `json:"path"`
+		} `json:"list"`
+	}
+	// errno=0 且能列出内容 → 目录存在（空目录也返回 list:[{}] 一项占位）
+	if json.Unmarshal(body, &r) != nil || r.Errno != 0 {
+		return false
+	}
+	for _, it := range r.List {
+		if it.Path == dir || strings.TrimSuffix(it.Path, "/") == strings.TrimSuffix(dir, "/") {
+			return true
+		}
+	}
+	return false
+}
+
 func baiduEnsureTmpDir(cookie string) string {
+	// 先查在不在：命中就零 API 写入直接复用，也顺带省掉首次播放的一次往返。
+	if baiduDirExists(cookie, baiduTmpBase) {
+		return baiduTmpBase
+	}
 	token, err := baiduBdstoken(cookie)
 	if err != nil || token == "" {
 		log.Printf("[baidu] 取 bdstoken 失败，转存降级根目录：%v", err)
@@ -687,6 +738,47 @@ func baiduMediainfoOnce(cookie, path string) (string, error) {
 	return "", fmt.Errorf("mediainfo 未返回直链")
 }
 
+// baiduDeleteFiles 批量删除。filemanager 接口一次最多给一批路径，
+// 返回 errno=132 说明触发了百度安全验证（需要人工在网页端过验证码），此时返回 false。
+func baiduDeleteFiles(cookie string, paths []string) bool {
+	token, err := baiduBdstoken(cookie)
+	if err != nil || token == "" {
+		log.Printf("[baidu] 删除前取 bdstoken 失败: %v", err)
+		return false
+	}
+	u := fmt.Sprintf(baiduFileManagerURL, token)
+	payload, _ := json.Marshal(paths)
+	// 【盒子实测】filemanager 删除只认 form 格式：filelist=<url-encoded JSON 数组字符串>；
+	// 直接 POST JSON body 会返回 errno=2 删不掉。
+	form := url.Values{}
+	form.Set("filelist", string(payload))
+	req, _ := http.NewRequest(http.MethodPost, u, strings.NewReader(form.Encode()))
+	req.Header.Set("User-Agent", baiduNetUA)
+	req.Header.Set("Referer", "https://pan.baidu.com/")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", cookie)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var out struct {
+		Errno int64 `json:"errno"`
+	}
+	if json.Unmarshal(body, &out) != nil || out.Errno != 0 {
+		if out.Errno == 132 {
+			log.Printf("[baidu] 删除触发百度安全验证（errno=132），需在网页端手动清理历史临时目录")
+		} else {
+			log.Printf("[baidu] 批量删除返回 errno=%d", out.Errno)
+		}
+		return false
+	}
+	return true
+}
+
+// baiduDeleteFile 删除单个路径见文件末尾（与历史调用点一致）。
+
 // ---- 临时文件清理：精确路径记录 + 定时清扫（绝不扫根目录） ----
 
 var (
@@ -756,8 +848,104 @@ func baiduStartSweeper() {
 // 删除超过 minAge 的文件。
 // 只认「文件名 + 修改时间」，不依赖内存记录 —— 这是重启后唯一可靠的信息来源。
 func baiduPurgeOrphans(cookie string, minAge time.Duration) {
+	// 固定名目录（正常只有这两个）
 	for _, dir := range []string{baiduTmpBase, baiduTmpBaseLegacy} {
 		baiduPurgeDir(cookie, dir, minAge)
+	}
+	// 【2026-10-17】历史遗留的时间戳目录：bigpan_tmp_20261017_191900 / panboost_tmp_...
+	// 老版本无条件 create 留下的垃圾，实测堆到 742 个。它们不再被使用，直接整个删掉。
+	baiduPurgeStaleTmpDirs(cookie)
+}
+
+// baiduPurgeStaleTmpDirs 删除历史遗留的时间戳临时目录（bigpan_tmp_YYYYMMDD_HHMMSS 这类）。
+//
+// 只删「名字同时含 bigpan_tmp / panboost_tmp 且再带一段时间戳后缀」的空目录，
+// 绝不碰固定名 bigpan_tmp（那里面是正在看的剧）、也绝不碰任何非空的目录。
+// 非空的会打印出来供人工判断，不自动删。
+func baiduPurgeStaleTmpDirs(cookie string) {
+	q := url.Values{}
+	q.Set("dir", "/")
+	q.Set("num", "1000")
+	q.Set("order", "time")
+	q.Set("desc", "1")
+	q.Set("clienttype", "0")
+	q.Set("web", "1")
+	q.Set("app_id", "250528")
+	req, _ := http.NewRequest(http.MethodGet, "https://pan.baidu.com/api/list?"+q.Encode(), nil)
+	req.Header.Set("User-Agent", baiduNetUA)
+	req.Header.Set("Referer", "https://pan.baidu.com/")
+	req.Header.Set("Cookie", cookie)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("[baidu] 扫根目录失败，跳过历史临时目录清理: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	var r struct {
+		Errno int64 `json:"errno"`
+		List  []struct {
+			Path     string `json:"path"`
+			IsDir    int    `json:"isdir"`
+			ServerFN string `json:"server_filename"`
+		} `json:"list"`
+	}
+	if json.Unmarshal(body, &r) != nil || r.Errno != 0 {
+		return
+	}
+	// 收集带时间戳后缀的临时目录
+	var stale []string
+	for _, it := range r.List {
+		if it.IsDir != 1 {
+			continue
+		}
+		name := it.ServerFN
+		if name == "" || strings.HasSuffix(name, baiduTmpBase) || strings.HasSuffix(name, baiduTmpBaseLegacy) {
+			continue // 固定名目录，绝不动
+		}
+		if !strings.HasPrefix(name, "bigpan_tmp_") && !strings.HasPrefix(name, "panboost_tmp_") {
+			continue // 不是临时目录，绝不动
+		}
+		stale = append(stale, it.Path)
+	}
+	if len(stale) == 0 {
+		return
+	}
+	// 逐个查是否为空，只删空的；非空的仅记录
+	var toDel []string
+	nonEmpty := 0
+	for _, p := range stale {
+		if baiduDirExists(cookie, p) {
+			// 有内容 → 不自动删。理论上老目录里的文件已被 sweeper 回收，
+			// 这里再兜一次底，避免误删用户自己的东西。
+			nonEmpty++
+			continue
+		}
+		toDel = append(toDel, p)
+	}
+	if len(toDel) == 0 {
+		if nonEmpty > 0 {
+			log.Printf("[baidu] 历史时间戳目录 %d 个均非空，保留不删", nonEmpty)
+		}
+		return
+	}
+	n := 0
+	for i := 0; i < len(toDel); i += 20 {
+		end := i + 20
+		if end > len(toDel) {
+			end = len(toDel)
+		}
+		if baiduDeleteFiles(cookie, toDel[i:end]) {
+			n += end - i
+		}
+		// 百度对短时间大批量删除会要安全验证（errno=132），睡一下降速
+		time.Sleep(500 * time.Millisecond)
+	}
+	if n > 0 {
+		log.Printf("[baidu] 启动清理：删除 %d 个历史时间戳临时目录", n)
+	}
+	if nonEmpty > 0 {
+		log.Printf("[baidu] 另有 %d 个历史临时目录非空，已保留（需人工确认）", nonEmpty)
 	}
 }
 
