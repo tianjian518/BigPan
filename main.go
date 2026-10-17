@@ -1238,6 +1238,9 @@ func main() {
 
 	flag.Parse()
 	log.SetFlags(log.Ltime)
+	if *flagPass == "admin" {
+		log.Printf("[安全] 正在使用默认密码 admin —— 对外网开放前请务必用 -pass 改成强密码")
+	}
 
 	if *flagSTRM != "" {
 		strmRoot = *flagSTRM
