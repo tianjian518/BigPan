@@ -1,0 +1,10 @@
+.git
+.gitignore
+data
+bigpan-data
+strm
+*.tar
+*.tar.gz
+bigpan-*
+*.log
+.env

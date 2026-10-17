@@ -1,0 +1,21 @@
+services:
+  bigpan:
+    build: .
+    image: bigpan:latest
+    container_name: bigpan
+    restart: unless-stopped
+    # host 模式：直接占用宿主机端口，局域网内手机/电视可直接访问
+    network_mode: host
+    volumes:
+      - ./data:/data
+    environment:
+      - TZ=Asia/Shanghai
+    command:
+      - "-port=8099"
+      - "-data=/data/items.json"
+      - "-concurrency=16"      # 并发连接数，先 16，够用再往上调
+      - "-chunk=4"             # 分片大小(MB)
+      - "-refresh=60"          # 追更自动刷新间隔（分钟）：到点自动重扫追更中的分享，0=关闭
+      - "-self=http://改成本机IP:8099"   # ← 必须改成 N1 的局域网 IP
+      - "-user=admin"
+      - "-pass=admin"          # ← 建议改掉

@@ -1,0 +1,23 @@
+# 运行时数据（含账号凭证，绝不提交）
+data/
+bigpan-data/
+strm/
+items.json
+accounts.json
+shares.json
+strm_config.json
+shares_gone.json
+*.bak*
+*.bak-*
+
+# 构建产物
+bigpan
+bigpan-*
+*.tar
+*.tar.gz
+*.exe
+
+# 其它
+*.log
+.env
+.DS_Store
