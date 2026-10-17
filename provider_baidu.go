@@ -450,15 +450,22 @@ func (baiduProvider) RefreshShare(shareID, passcode string) (string, []ShareFile
 // 重名问题靠「查重复用 + ondup=newcopy 的 (1) 后缀」解决，不再用 per-fs_id 子目录。
 // baiduDirExists 查某目录是否存在（baiduTmpBase 这类固定目录用）。
 //
-// 【2026-10-17 修复「根目录堆了 742 个临时目录」】
-// 原来的 baiduEnsureTmpDir 无条件调 create（a=commit + logid），百度在
-// logid 不同的时候会当成新目录，于是每播一集就在根目录留一个
-// bigpan_tmp_20261017_HHMMSS。实测一天堆到742 个，而启动清理只扫
-// baiduTmpBase 与 baiduTmpBaseLegacy 两个固定名，这些带时间戳的目录
-// 既扫不到也删不掉，纯垃圾。
+// 【2026-10-17 修复「根目录堆 742 个临时目录」— 二次修复】
 //
-// 现在改成：先确认目录在不在，在就直接返回，不再 create。目录不存在时
-// 才建一次，之后永久复用。
+// 第一版判断写错了：遍历 list 里每项的 path 与 dirp 比较。
+// 但百度 api/list 的 path 字段返回的是「目录内文件的全路径」（如
+// /bigpan_tmp/01~4K.mp4），**永远不会返回目录本身**，所以
+// `p == dirp` 恒为 false → 目录明明存在也判定「不存在」→ 每次播放都调
+// create → 百度对已存在的目录会另建一个带时间戳的（实测：请求 path=/bigpan_tmp，
+// 返回 path=/bigpan_tmp_20261017_220035），于是目录越堆越多。
+//
+// 实测判据（沙箱用真实百度账号跑过）：
+//
+//	/bigpan_tmp                 errno=0   list=4 条   存在且有文件
+//	/bigpan_tmp_20261017_220035 errno=0   list=0 条   存在但为空
+//	/不存在的目录                errno=-9  list=0 条   不存在
+//
+// **正确判据就是 errno**：==0 表示目录存在；list 条数只用来区分空/非空。
 func baiduDirExists(cookie, dir string) bool {
 	q := url.Values{}
 	q.Set("dir", dir)
@@ -482,16 +489,40 @@ func baiduDirExists(cookie, dir string) bool {
 			Path string `json:"path"`
 		} `json:"list"`
 	}
-	// errno=0 且能列出内容 → 目录存在（空目录也返回 list:[{}] 一项占位）
+	if json.Unmarshal(body, &r) != nil {
+		return false
+	}
+	// errno==0 → 目录存在（空目录也返回 0，只是 list 为空）；非 0（实测 -9）→ 不存在。
+	return r.Errno == 0
+}
+
+// baiduDirEmpty 在 baiduDirExists 为真之后调用，额外判断目录是否为空。
+// 单独拆出来是因为清理历史时间戳目录时需要「存在且空」两个条件。
+func baiduDirEmpty(cookie, dir string) bool {
+	q := url.Values{}
+	q.Set("dir", dir)
+	q.Set("num", "1")
+	q.Set("clienttype", "0")
+	q.Set("web", "1")
+	q.Set("app_id", "250528")
+	req, _ := http.NewRequest(http.MethodGet, "https://pan.baidu.com/api/list?"+q.Encode(), nil)
+	req.Header.Set("User-Agent", baiduNetUA)
+	req.Header.Set("Referer", "https://pan.baidu.com/")
+	req.Header.Set("Cookie", cookie)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var r struct {
+		Errno int64             `json:"errno"`
+		List  []json.RawMessage `json:"list"`
+	}
 	if json.Unmarshal(body, &r) != nil || r.Errno != 0 {
 		return false
 	}
-	for _, it := range r.List {
-		if it.Path == dir || strings.TrimSuffix(it.Path, "/") == strings.TrimSuffix(dir, "/") {
-			return true
-		}
-	}
-	return false
+	return len(r.List) == 0
 }
 
 func baiduEnsureTmpDir(cookie string) string {
@@ -523,12 +554,24 @@ func baiduEnsureTmpDir(cookie string) string {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	var out struct {
-		Errno int64 `json:"errno"`
+		Errno int64  `json:"errno"`
+		Path  string `json:"path"` // 百度返回的「真实落地路径」
+		Name  string `json:"name"`
 	}
 	json.Unmarshal(body, &out)
 	if out.Errno != 0 && out.Errno != -8 { // -8 = 已存在
 		log.Printf("[baidu] 建临时目录返回 errno=%d，降级根目录", out.Errno)
 		return ""
+	}
+	// 【关键】必须用百度返回的真实 path，不能直接用请求里的 baiduTmpBase。
+	// 实测：对已存在的 /bigpan_tmp 调 create，百度不会复用它，而是另建一个
+	// 带时间戳的目录并返回新路径 —— {"errno":0,"path":"/bigpan_tmp_20261017_220035"}。
+	// 若继续用请求路径，转存就会落到一个我们没打算用的目录里。
+	if out.Path != "" {
+		if out.Path != baiduTmpBase {
+			log.Printf("[baidu] 百度另建临时目录 %s（请求的是 %s）", out.Path, baiduTmpBase)
+		}
+		return out.Path
 	}
 	return baiduTmpBase
 }
@@ -915,9 +958,9 @@ func baiduPurgeStaleTmpDirs(cookie string) {
 	var toDel []string
 	nonEmpty := 0
 	for _, p := range stale {
-		if baiduDirExists(cookie, p) {
-			// 有内容 → 不自动删。理论上老目录里的文件已被 sweeper 回收，
-			// 这里再兜一次底，避免误删用户自己的东西。
+		// 先判存在（errno），再判空（list 条数）。两个条件缺一不可：
+		// 只判存在会误删非空目录，只判空会把不存在的目录也当成空的。
+		if !baiduDirExists(cookie, p) || !baiduDirEmpty(cookie, p) {
 			nonEmpty++
 			continue
 		}
