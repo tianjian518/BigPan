@@ -1,0 +1,50 @@
+# github.com/SheltonZhu/115driver v1.3.5
+## explicit; go 1.23.0
+github.com/SheltonZhu/115driver/pkg/crypto
+github.com/SheltonZhu/115driver/pkg/crypto/ec115
+github.com/SheltonZhu/115driver/pkg/crypto/m115
+github.com/SheltonZhu/115driver/pkg/driver
+# github.com/aead/ecdh v0.2.0
+## explicit
+github.com/aead/ecdh
+# github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
+## explicit
+github.com/aliyun/aliyun-oss-go-sdk/oss
+# github.com/andreburgaud/crypt2go v1.1.0
+## explicit; go 1.18
+github.com/andreburgaud/crypt2go/ecb
+github.com/andreburgaud/crypt2go/padding
+# github.com/go-resty/resty/v2 v2.17.2
+## explicit; go 1.23.0
+github.com/go-resty/resty/v2
+github.com/go-resty/resty/v2/shellescape
+# github.com/kr/pretty v0.3.1
+## explicit; go 1.12
+# github.com/pierrec/lz4/v4 v4.1.17
+## explicit; go 1.14
+github.com/pierrec/lz4/v4
+github.com/pierrec/lz4/v4/internal/lz4block
+github.com/pierrec/lz4/v4/internal/lz4errors
+github.com/pierrec/lz4/v4/internal/lz4stream
+github.com/pierrec/lz4/v4/internal/xxh32
+# github.com/pkg/errors v0.9.1
+## explicit
+github.com/pkg/errors
+# github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+## explicit; go 1.13
+github.com/skip2/go-qrcode
+github.com/skip2/go-qrcode/bitset
+github.com/skip2/go-qrcode/reedsolomon
+# golang.org/x/crypto v0.58.0
+## explicit; go 1.26.0
+golang.org/x/crypto/curve25519
+# golang.org/x/net v0.61.0
+## explicit; go 1.26.0
+golang.org/x/net/publicsuffix
+golang.org/x/net/webdav
+golang.org/x/net/webdav/internal/xml
+# golang.org/x/text v0.43.0
+## explicit; go 1.26.0
+# golang.org/x/time v0.12.0
+## explicit; go 1.23.0
+golang.org/x/time/rate
