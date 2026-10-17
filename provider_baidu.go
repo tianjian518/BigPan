@@ -838,6 +838,16 @@ func baiduRecordTemp(p string) {
 	baiduTempMu.Unlock()
 }
 
+// baiduTempHas 判断路径是否在内存记录里（本次启动转存/复用过的）。
+// 盘扫时用它跳过有主目录，避免误伤：复用时记录时间会续期，而网盘上的
+// 修改时间还是转存那一刻，按 mtime 删会把正在看的剧的转存文件删掉。
+func baiduTempHas(p string) bool {
+	baiduTempMu.Lock()
+	defer baiduTempMu.Unlock()
+	_, ok := baiduTempPaths[p]
+	return ok
+}
+
 // baiduStartSweeper 启动后台清扫：删除 30 分钟前的临时文件。
 //
 // 【2026-10-17 修复孤儿堆积】清扫清单 baiduTempPaths 只在内存里，容器一重启就清空，
@@ -883,21 +893,31 @@ func baiduStartSweeper() {
 					log.Printf("[baidu] 已清扫临时文件 %s", p)
 				}
 			}
+			// 补漏盘扫（只扫两个固定名目录，不碰根目录的时间戳遗留）：
+			// 上面两套都管不到「上次启动转存 + 本次启动没认领」的文件 ——
+			// 启动盘扫只在账号就绪前等 2 分钟，用户建完容器过会儿才导入百度
+			// 登录（或 cookie 过期重导）就会错过窗口，遗留文件从此永久失管
+			// （2026-10-18 实测：用户盘里 10-17 晚转存的 8 个文件躺了 8 小时）。
+			// 这里每轮都补，遗留文件最多滞留 30+10 分钟，与导入/重启时机脱钩。
+			// 误伤防护在 baiduPurgeDir 里：内存 map 有的路径直接跳过。
+			baiduPurgeFixedDirs(cookie, 30*time.Minute)
 		}
 	}()
 }
 
-// baiduPurgeOrphans 扫描临时目录（新 /bigpan_tmp + 旧 /panboost_tmp）的实际内容，
-// 删除超过 minAge 的文件。
-// 只认「文件名 + 修改时间」，不依赖内存记录 —— 这是重启后唯一可靠的信息来源。
+// baiduPurgeOrphans 完整启动清理：两个固定名临时目录 + 根目录的时间戳遗留。
+// 启动时跑一次；周期循环里只跑 baiduPurgeFixedDirs（根目录扫描成本高，
+// 没必要每 10 分钟来一次）。
 func baiduPurgeOrphans(cookie string, minAge time.Duration) {
-	// 固定名目录（正常只有这两个）
+	baiduPurgeFixedDirs(cookie, minAge)
+	baiduPurgeStaleTmpDirs(cookie)
+}
+
+// baiduPurgeFixedDirs 扫描固定名临时目录（新 /bigpan_tmp + 旧 /panboost_tmp）。
+func baiduPurgeFixedDirs(cookie string, minAge time.Duration) {
 	for _, dir := range []string{baiduTmpBase, baiduTmpBaseLegacy} {
 		baiduPurgeDir(cookie, dir, minAge)
 	}
-	// 【2026-10-17】历史遗留的时间戳目录：bigpan_tmp_20261017_191900 / panboost_tmp_...
-	// 老版本无条件 create 留下的垃圾，实测堆到 742 个。它们不再被使用，直接整个删掉。
-	baiduPurgeStaleTmpDirs(cookie)
 }
 
 // baiduPurgeStaleTmpDirs 删除历史遗留的时间戳临时目录（bigpan_tmp_YYYYMMDD_HHMMSS 这类）。
@@ -1026,7 +1046,7 @@ func baiduPurgeDir(cookie, dir string, minAge time.Duration) {
 	if json.Unmarshal(body, &r) != nil || r.Errno != 0 {
 		// errno=-9 = 目录不存在：首次运行还没转过存，属于正常情况，不报错。
 		if r.Errno != -9 {
-			log.Printf("[baidu] 启动清理：临时目录 %s 列表异常 errno=%d", dir, r.Errno)
+			log.Printf("[baidu] 清扫：临时目录 %s 列表异常 errno=%d", dir, r.Errno)
 		}
 		return
 	}
@@ -1036,11 +1056,16 @@ func baiduPurgeDir(cookie, dir string, minAge time.Duration) {
 		if it.IsDir != 0 || it.Path == "" {
 			continue
 		}
+		// 内存 map 里有的路径 = 本次启动转存/复用的，交给 TTL 那套管。
+		// 复用时记录时间会续期而 mtime 不变，按 mtime 删会误伤正在看的剧。
+		if baiduTempHas(it.Path) {
+			continue
+		}
 		if time.Since(time.Unix(it.MTime, 0)) < minAge {
 			continue
 		}
 		if err := baiduDeleteFile(cookie, it.Path); err != nil {
-			log.Printf("[baidu] 启动清理失败 %s: %v", it.ServerFN, err)
+			log.Printf("[baidu] 清扫临时文件失败 %s: %v", it.ServerFN, err)
 			continue
 		}
 		freed += it.Size
@@ -1050,7 +1075,7 @@ func baiduPurgeDir(cookie, dir string, minAge time.Duration) {
 		baiduTempMu.Unlock()
 	}
 	if n > 0 {
-		log.Printf("[baidu] 启动清理：%s 删除 %d 个遗留临时文件，释放 %.2f GB", dir, n, float64(freed)/(1<<30))
+		log.Printf("[baidu] 清扫：%s 删除 %d 个遗留临时文件，释放 %.2f GB", dir, n, float64(freed)/(1<<30))
 	}
 }
 
