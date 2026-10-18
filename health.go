@@ -202,9 +202,10 @@ func healthCycle(store *Store, self string) healthState {
 	recordHealth(st)
 
 	// 有清理才重建 STRM（重建本身会删掉不再存在的 .strm 与空目录）。
+	// force=false：地址变过时只删孤儿、写新文件，存量等用户手动全量重建。
 	if st.Purged > 0 && self != "" {
 		strmMu.Lock()
-		n, err := buildSTRM(store, self)
+		n, err := buildSTRM(store, self, false)
 		strmMu.Unlock()
 		if err != nil {
 			log.Printf("[巡检] 清理后重建 STRM 失败：%v", err)

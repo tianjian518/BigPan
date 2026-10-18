@@ -366,6 +366,25 @@ func (s *Store) Delete(id string) bool {
 	return false
 }
 
+// Update 按 ID 原地修改条目（改分类/搬目录用）：ID 与入库时间不变，
+// 只让 fn 动它要动的字段。改完置脏让索引下次读时重建，并立即落盘。
+func (s *Store) Update(id string, fn func(*Item)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dirty {
+		s.rebuildIndex()
+		s.dirty = false
+	}
+	i, ok := s.idIdx[id]
+	if !ok {
+		return false
+	}
+	fn(&s.items[i])
+	s.dirty = true // Dir/Category 变了：路径索引与目录缓存都要重建
+	s.save()
+	return true
+}
+
 func (s *Store) FindByName(name string) *Item {
 	s.readLockFresh()
 	defer s.mu.RUnlock()

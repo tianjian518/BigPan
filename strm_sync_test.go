@@ -19,9 +19,11 @@ func setupSTRMTest(t *testing.T) (*Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldRoot, oldCfg := strmRoot, strmCfg
-	t.Cleanup(func() { strmRoot = oldRoot; strmCfg = oldCfg })
+	// 配置文件与状态文件都指到临时目录，避免测试写 /data/ 下的真实文件
+	oldRoot, oldCfg, oldCfgPath := strmRoot, strmCfg, strmConfigPath
+	t.Cleanup(func() { strmRoot = oldRoot; strmCfg = oldCfg; strmConfigPath = oldCfgPath })
 	strmRoot = filepath.Join(dir, "strm")
+	strmConfigPath = filepath.Join(dir, "strm_config.json")
 	return s, strmRoot
 }
 

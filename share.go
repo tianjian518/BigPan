@@ -588,6 +588,19 @@ func apiShares(store *Store) http.HandlerFunc {
 		}
 		sort.SliceStable(out, func(i, j int) bool { return out[i].LastAdded > out[j].LastAdded })
 
+		// 全部分类（改分类弹窗的下拉选项）：分页前聚合，不受 page/size 影响
+		catSet := map[string]bool{}
+		for _, s := range out {
+			if s.Category != "" {
+				catSet[s.Category] = true
+			}
+		}
+		cats := make([]string, 0, len(catSet))
+		for c := range catSet {
+			cats = append(cats, c)
+		}
+		sort.Strings(cats)
+
 		total := len(out)
 		page, size := 1, 0 // size=0 → 不分页，返回全部
 		if v := r.URL.Query().Get("page"); v != "" {
@@ -616,6 +629,7 @@ func apiShares(store *Store) http.HandlerFunc {
 		}
 		writeJSON(w, map[string]interface{}{
 			"ok": true, "shares": out, "total": total, "page": page, "size": size,
+			"categories": cats,
 		})
 	}
 }
@@ -803,8 +817,8 @@ func apiShareRefresh(store *Store, self string) http.HandlerFunc {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		// 有新集才重建 STRM，规矩与定时刷新一致（见 autoRefreshCycle）：
-		// buildSTRM 是全量重写，没新集就别折腾磁盘。
+		// 有新集才同步 STRM，规矩与定时刷新一致（见 autoRefreshCycle）：
+		// 没新集就别折腾磁盘（增量同步虽不重写旧文件，走一遍也要几秒）。
 		// 【2026-10-18 修缺口】此前手动刷新只入库不重建——新集进了数据库却
 		// 没有 .strm 文件，飞牛影视根本看不到；而下一轮定时刷新这部剧已
 		// 没有新集（added=0），照样不重建，新集就一直缺着。
@@ -866,10 +880,11 @@ func autoRefreshCycle(store *Store, self string) {
 		log.Printf("[追更] 本轮定时刷新完成：追更中 %d 个，成功 %d 个，新增 %d 集", on, done, newEp)
 	}
 	// 有新集才重建 STRM（没变化就不折腾磁盘，N1 上几百个文件也要一两秒）
+	// force=false：地址变过时只删孤儿、写新文件，存量等用户手动全量重建
 	if newEp > 0 && self != "" && strmCfg.AutoRebuild {
 		strmMu.Lock()
 		defer strmMu.Unlock()
-		if n, err := buildSTRM(store, self); err != nil {
+		if n, err := buildSTRM(store, self, false); err != nil {
 			log.Printf("[strm] 追更后重建失败: %v", err)
 		} else {
 			log.Printf("[strm] 追更后已重建：%d 个", n)

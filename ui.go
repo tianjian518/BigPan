@@ -40,7 +40,7 @@ func renderIndex(store *Store, as *AccountStore, self string) string {
 /* ============ 设计令牌（Naive UI 风格） ============ */
 :root{
   --bg:#f5f6f8; --card:#fff; --line:#e7e9ee; --line2:#f0f1f4;
-  --txt:#1f2329; --txt2:#4b5160; --mut:#8a909c;
+  --txt:#1f2329; --txt2:#4b5160; --mut:#767d8c;
   --pri:#2080f0; --pri-h:#1a6dd8; --pri2:#e9f2ff; --pri-line:#bcd7fb;
   --ok:#18a058; --warn:#f0a020; --danger:#d03050; --danger2:#fbe8ec;
   --sh1:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
@@ -49,7 +49,10 @@ func renderIndex(store *Store, as *AccountStore, self string) string {
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}
-body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt);font-size:14px;line-height:1.6}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
+  background:radial-gradient(1100px 560px at 12% -4%,#e4eeff 0%,rgba(228,238,255,0) 60%),
+             radial-gradient(900px 520px at 92% 96%,#eef0ff 0%,rgba(238,240,255,0) 55%),var(--bg);
+  background-attachment:fixed;color:var(--txt);font-size:14.5px;line-height:1.6}
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-thumb{background:#d3d7de;border-radius:4px;border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:#b9bec7}
@@ -65,20 +68,20 @@ input[type=checkbox]{accent-color:var(--pri);width:15px;height:15px;cursor:point
 .brand b{font-size:16.5px;font-weight:700;letter-spacing:.2px;display:block;line-height:1.2}
 .brand small{display:block;font-size:11px;color:var(--mut);font-weight:400}
 .nav{display:flex;flex-direction:column;gap:3px}
-.nav .grp{font-size:11px;color:#b3b8c2;padding:12px 12px 5px;letter-spacing:.5px}
+.nav .grp{font-size:11.5px;color:#a9afba;padding:12px 12px 5px;letter-spacing:.5px}
 .nav a{display:flex;align-items:center;gap:10px;padding:10.5px 12px;border-radius:8px;color:var(--txt2);text-decoration:none;cursor:pointer;font-size:16px;font-weight:500;position:relative;transition:background .15s,color .15s}
 .nav a svg{width:19px;height:19px;stroke:currentColor;flex-shrink:0;opacity:.85}
 .nav a:hover{background:#f3f5f8;color:var(--txt)}
 .nav a.on{background:var(--pri2);color:var(--pri);font-weight:600}
 .nav a.on::before{content:'';position:absolute;left:-12px;top:20%;height:60%;width:3px;border-radius:0 3px 3px 0;background:var(--pri)}
 .nav a:active{transform:scale(.985)}
-.side-ft{margin-top:auto;padding:12px 10px 0;border-top:1px solid var(--line2);font-size:11.5px;color:var(--mut)}
+.side-ft{margin-top:auto;padding:12px 10px 0;border-top:1px solid var(--line2);font-size:12px;color:var(--mut)}
 .side-ft .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px;vertical-align:1px;box-shadow:0 0 0 3px rgba(24,160,88,.15)}
 
 .main{flex:1;padding:26px 30px;max-width:1100px;min-width:0}
 .pagehd{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
-h2{font-size:20px;font-weight:700;letter-spacing:.2px}
-.sub{color:var(--mut);font-size:13.5px;margin-bottom:18px}
+h2{font-size:21px;font-weight:700;letter-spacing:.2px}
+.sub{color:var(--txt2);font-size:14px;margin-bottom:18px}
 .pagehd .sub{margin:0}
 .pg{animation:fadein .26s ease}
 @keyframes fadein{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
@@ -86,20 +89,46 @@ h2{font-size:20px;font-weight:700;letter-spacing:.2px}
 /* ============ 卡片 ============ */
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px;box-shadow:var(--sh1);transition:box-shadow .2s}
 .card:hover{box-shadow:var(--sh2)}
-.card>h3,.card>b{font-size:14.5px;font-weight:600}
+.card>h3,.card>b{font-size:15px;font-weight:600}
+/* 卡片头：标题 + 右侧说明，统一各卡片标题区的排版 */
+.card .cd{display:block;color:var(--mut);font-size:13px;font-weight:400;margin-top:3px;line-height:1.6}
+.card .chd{align-items:center}
+/* 提示条：把散落各处的 inline style 提示收敛成统一组件 */
+.tips{margin:12px 0 0;padding:11px 14px;background:var(--pri2);border:1px solid #d6e2ff;border-radius:9px;font-size:13px;line-height:1.75;color:#33507a}
+.tips.warn{background:#fdf6ea;border-color:#f3ddb4;color:#8a5a12}
+.tips b{color:inherit}
+/* 警示横幅（地址变了等需要用户注意的场景） */
+.banner{margin:12px 0 0;padding:12px 14px;background:var(--danger2);border:1px solid #f0c4cd;border-radius:9px;font-size:13.5px;line-height:1.75;color:#a12842}
+/* 媒体库批量操作浮条（勾选后从底部升起） */
+.selbar{position:fixed;left:50%;bottom:22px;transform:translate(-50%,14px);z-index:80;display:none;align-items:center;gap:10px;
+  padding:10px 12px 10px 18px;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border:1px solid var(--line);
+  border-radius:12px;box-shadow:0 10px 32px rgba(16,24,40,.16);font-size:13.5px;opacity:0;transition:opacity .18s,transform .18s}
+.selbar.show{opacity:1;transform:translate(-50%,0)}
+.selbar b{font-weight:600;white-space:nowrap}
+.sp{flex:1}
 .stat{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
 .stat .card{flex:1;min-width:140px;margin:0;padding:18px 14px;text-align:center;cursor:default}
 .stat b{font-size:23px;font-weight:700;color:var(--pri);font-variant-numeric:tabular-nums;display:block;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stat span{display:block;color:var(--mut);font-size:12px;margin-top:3px}
+.stat span{display:block;color:var(--mut);font-size:12.5px;margin-top:3px}
 .stat .si{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin:0 auto 9px}
 .stat .si svg{width:17px;height:17px;stroke:currentColor}
 .si.b{background:#e8f1ff;color:#1d6fd8}.si.p{background:#f1ebff;color:#7c3aed}
 .si.o{background:#fff3e2;color:#e8890c}.si.g{background:#e6f7ee;color:#18a058}
 
+/* ============ 新用户引导（三步走） ============ */
+.guide{display:flex;gap:0;flex-wrap:wrap}
+.gstep{flex:1;min-width:200px;padding:6px 18px 6px 0;position:relative}
+.gstep+.gstep{border-left:1px dashed var(--line);padding-left:22px}
+.gn{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14px;margin-bottom:5px}
+.gn .no{width:22px;height:22px;border-radius:50%;background:var(--pri);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(32,128,240,.35)}
+.gstep p{color:var(--mut);font-size:13px;line-height:1.7;margin:0}
+.gstep .go{margin-top:9px}
+.gstep .go button{padding:6px 15px;font-size:13px}
+
 /* ============ 控件 ============ */
 input,button,select{font:inherit}
 input[type=text]{width:100%;padding:9px 13px;border:1px solid #dcdfe6;border-radius:8px;background:#fff;outline:none;transition:border-color .15s,box-shadow .15s;color:var(--txt)}
-input[type=text]::placeholder{color:#b7bcc6}
+input[type=text]::placeholder{color:#aeb4bf}
 input[type=text]:hover{border-color:#c2c7d0}
 input[type=text]:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(32,128,240,.13)}
 select{padding:9px 13px;border:1px solid #dcdfe6;border-radius:8px;background:#fff;outline:none;cursor:pointer;transition:border-color .15s,box-shadow .15s;color:var(--txt)}
@@ -109,10 +138,17 @@ button:hover{background:var(--pri-h)}
 button:active{transform:scale(.965)}
 button.gray{background:#fff;color:var(--txt2);border:1px solid #dcdfe6;box-shadow:none;font-weight:500}
 button.gray:hover{color:var(--pri);border-color:var(--pri-line);background:var(--pri2)}
+/* 状态按钮（追更中）：浅蓝底，一眼是"状态"而非"操作"，不和行内操作按钮抢眼 */
+button.ston{background:var(--pri2);color:var(--pri);border:1px solid var(--pri-line);box-shadow:none;font-weight:600}
+button.ston:hover{background:#d8e8ff;color:var(--pri-h)}
 button.danger{background:#fff;color:var(--danger);border:1px solid #f0c4cd;box-shadow:none;font-weight:500}
 button.danger:hover{background:var(--danger2);border-color:var(--danger)}
 button:disabled{opacity:.45;cursor:default;transform:none}
-button.mini{padding:4.5px 12px;font-size:13px;border-radius:7px;font-weight:500}
+button.mini{padding:4.5px 12px;font-size:13.5px;border-radius:7px;font-weight:500;white-space:nowrap}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--pri);outline-offset:1px}
+/* 复制小按钮：贴在 code 地址右侧 */
+.copybtn{display:inline-flex;align-items:center;gap:5px;margin-left:8px;padding:3px 11px;font-size:12.5px;font-weight:500;border-radius:7px;vertical-align:1px}
+.copybtn svg{width:13px;height:13px;stroke:currentColor;flex-shrink:0}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 
 /* 搜索框（媒体库筛选） */
@@ -122,19 +158,19 @@ button.mini{padding:4.5px 12px;font-size:13px;border-radius:7px;font-weight:500}
 
 /* ============ 表格 ============ */
 table{width:100%;border-collapse:collapse}
-th{font-size:13px;color:var(--mut);text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);font-weight:600;background:#fafbfc;white-space:nowrap}
+th{font-size:13.5px;color:var(--mut);text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);font-weight:600;background:#fafbfc;white-space:nowrap}
 td{padding:9px 13px;border-bottom:1px solid var(--line2);font-size:14px;color:var(--txt);vertical-align:middle}
 td.brk{word-break:break-all}
 td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-td.tm{text-align:right;color:var(--mut);font-size:12.5px;white-space:nowrap;font-variant-numeric:tabular-nums}
+td.tm{text-align:right;color:var(--mut);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
 table tr:last-child td{border-bottom:0}
 tbody tr,table tr{transition:background .12s}
 table tr:hover td{background:#f7f9fc}
 .tdpath{display:inline-block;max-width:560px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:-2px}
-.tmeta{font-size:12px;color:var(--mut);margin-top:2px;line-height:1.45;word-break:break-all}
+.tmeta{font-size:12.5px;color:var(--mut);margin-top:2px;line-height:1.45;word-break:break-all}
 .chd{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
 .chd b{font-size:14px}
-.chd .csub{font-size:12px;color:var(--mut)}
+.chd .csub{font-size:12.5px;color:var(--mut)}
 .rowlk{color:var(--txt);text-decoration:none;font-weight:500}
 .rowlk:hover{color:var(--pri)}
 @media(max-width:720px){
@@ -143,15 +179,15 @@ table tr:hover td{background:#f7f9fc}
   .tdpath{max-width:180px}}
 
 /* ============ 媒体库（OpenList 风格：面包屑 + 逐层进入 + 勾选批量 + 整剧删除） ============ */
-.crumb{display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:2px 8px 16px;font-size:14px}
+.crumb{display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:2px 8px 16px;font-size:14.5px}
 .crumb .cb{display:inline-flex;align-items:center;gap:6px;color:var(--mut);text-decoration:none;padding:5px 10px;border-radius:8px;transition:background .13s,color .13s;max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .crumb .cb:hover{background:var(--pri2);color:var(--pri)}
 .crumb .cb.cur{color:var(--txt);font-weight:600;background:#f2f4f8}
 .crumb .cb svg{width:15px;height:15px;stroke:currentColor;flex-shrink:0}
-.crumb .csep{color:#ccd1d9;font-size:13px;padding:0 2px}
+.crumb .csep{color:#c3c9d2;font-size:13.5px;padding:0 2px}
 /* 列表视图 */
 .lvt{width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed}
-.lvt thead th{font-size:13px;color:var(--mut);text-align:left;padding:9px 14px;border-bottom:1px solid var(--line);font-weight:600;background:#fafbfc;white-space:nowrap}
+.lvt thead th{font-size:13.5px;color:var(--mut);text-align:left;padding:9px 14px;border-bottom:1px solid var(--line);font-weight:600;background:#fafbfc;white-space:nowrap}
 .lvt td{padding:11px 14px;border-bottom:1px solid var(--line2);font-size:14px;vertical-align:middle}
 .lvt tbody tr:last-child td{border-bottom:0}
 .lvt tbody tr{transition:background .12s}
@@ -164,7 +200,7 @@ table tr:hover td{background:#f7f9fc}
 .fv:hover b{color:var(--pri)}
 .fv.play .fdi{stroke:var(--pri)}
 .libsz{color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
-.libtm{color:var(--mut);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right}
+.libtm{color:var(--mut);font-size:13.5px;white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right}
 .ops{text-align:right;width:130px;white-space:nowrap}
 .acts{opacity:0;transition:opacity .12s;display:inline-flex;gap:6px}
 .lvt tbody tr:hover .acts{opacity:1}
@@ -173,24 +209,24 @@ table tr:hover td{background:#f7f9fc}
 .gcard{border:1px solid var(--line2);border-radius:12px;padding:18px 14px;cursor:pointer;background:#fff;text-align:center;transition:border-color .15s,box-shadow .15s,transform .15s}
 .gcard:hover{border-color:var(--pri-line);box-shadow:0 6px 18px rgba(32,128,240,.12);transform:translateY(-1px)}
 .gcard .fdi{width:34px;height:34px;stroke-width:1.6;margin:0 auto;display:block}
-.gcard .gn{font-size:13px;font-weight:500;line-height:1.5;margin-top:11px;max-height:3.9em;overflow:hidden;word-break:break-all}
-.gcard .gs{font-size:12px;color:var(--mut);margin-top:6px}
-.tag{display:inline-flex;align-items:center;background:var(--pri2);color:var(--pri);border-radius:6px;font-size:11.5px;padding:2.5px 9px;font-weight:600;white-space:nowrap}
+.gcard .gn{font-size:13.5px;font-weight:500;line-height:1.5;margin-top:11px;max-height:3.9em;overflow:hidden;word-break:break-all}
+.gcard .gs{font-size:12.5px;color:var(--mut);margin-top:6px}
+.tag{display:inline-flex;align-items:center;background:var(--pri2);color:var(--pri);border-radius:6px;font-size:12px;padding:2.5px 9px;font-weight:600;white-space:nowrap}
 .tag.q{background:#e8f1ff;color:#1d6fd8}.tag.n{background:#fff2e0;color:#d97706}.tag.b{background:#e8f1ff;color:#1d6fd8}
 .tag.m{background:#e6f7ee;color:#18a058}.tag.t{background:#e8f8fb;color:#0891b2}
 
 /* ============ 提示 / 弹层 ============ */
-.toast{position:fixed;top:26px;left:50%;transform:translate(-50%,-16px);background:rgba(28,32,38,.92);backdrop-filter:blur(6px);color:#fff;padding:11px 22px;border-radius:10px;opacity:0;transition:all .28s cubic-bezier(.2,.8,.3,1);pointer-events:none;z-index:99;font-size:13.5px;box-shadow:0 6px 20px rgba(0,0,0,.25);border-left:3px solid var(--pri);max-width:82vw}
+.toast{position:fixed;top:26px;left:50%;transform:translate(-50%,-16px);background:rgba(28,32,38,.92);backdrop-filter:blur(6px);color:#fff;padding:11px 22px;border-radius:10px;opacity:0;transition:all .28s cubic-bezier(.2,.8,.3,1);pointer-events:none;z-index:99;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);border-left:3px solid var(--pri);max-width:82vw}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 /* 自定义确认弹窗（替代浏览器原生 confirm） */
 .modal{position:fixed;inset:0;background:rgba(15,20,30,.42);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:120;padding:20px;opacity:0;transition:opacity .18s}
 .modal.show{opacity:1}
 .mbox{background:#fff;border-radius:14px;width:100%;max-width:400px;padding:22px;box-shadow:0 24px 60px rgba(15,20,30,.28);transform:translateY(12px) scale(.97);transition:transform .22s cubic-bezier(.2,.9,.3,1.2)}
 .modal.show .mbox{transform:none}
-.mtitle{font-size:15.5px;font-weight:700;display:flex;align-items:center;gap:10px}
+.mtitle{font-size:16px;font-weight:700;display:flex;align-items:center;gap:10px}
 .mtitle .mi{width:30px;height:30px;border-radius:9px;background:var(--danger2);color:var(--danger);display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .mtitle .mi svg{width:16px;height:16px;stroke:currentColor}
-.mbody{color:var(--txt2);font-size:13.5px;margin:13px 0 20px;line-height:1.65;word-break:break-all;white-space:pre-wrap}
+.mbody{color:var(--txt2);font-size:14px;margin:13px 0 20px;line-height:1.65;word-break:break-all;white-space:pre-wrap}
 .mfoot{display:flex;justify-content:flex-end;gap:10px}
 .mfoot button{min-width:76px}
 /* 播放器 */
@@ -205,18 +241,18 @@ video{width:100%;max-height:66vh;display:block;background:#000}
 .pbar{display:flex;gap:8px;margin-top:12px;align-items:center;color:#c4cbd8;font-size:12.5px;word-break:break-all}
 .pbar button{background:#212b3d}
 .pbar button:hover{background:#2c3a54}
-code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-radius:6px;font-size:12.5px;word-break:break-all;color:var(--txt2);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-radius:6px;font-size:13px;word-break:break-all;color:var(--txt2);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .spin{display:inline-block;width:15px;height:15px;border:2px solid var(--pri-line);border-top-color:var(--pri);border-radius:50%;animation:rot .7s linear infinite;vertical-align:-2px;margin-right:7px}
 @keyframes rot{to{transform:rotate(360deg)}}
 /* 加载态 / 空状态 */
-.loading{padding:46px 10px;text-align:center;color:var(--mut);font-size:13px}
+.loading{padding:46px 10px;text-align:center;color:var(--mut);font-size:13.5px}
 .loading .spin{width:22px;height:22px;border-width:2.5px;margin:0 auto 12px;display:block}
 .skel{height:86px;border-radius:12px;flex:1;min-width:140px;border:1px solid var(--line);background:linear-gradient(90deg,#eef0f4 25%,#f6f7f9 37%,#eef0f4 63%);background-size:400% 100%;animation:sh 1.2s ease infinite}
 @keyframes sh{from{background-position:100% 50%}to{background-position:0 50%}}
-.empty{padding:48px 16px;text-align:center;color:var(--mut);font-size:13px}
+.empty{padding:48px 16px;text-align:center;color:var(--mut);font-size:13.5px}
 .empty .ei{width:46px;height:46px;border-radius:12px;background:#f2f4f8;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
 .empty .ei svg{width:22px;height:22px;stroke:#b6bcc7}
-.empty b{display:block;color:var(--txt2);font-size:14px;margin-bottom:4px;font-weight:600}
+.empty b{display:block;color:var(--txt2);font-size:14.5px;margin-bottom:4px;font-weight:600}
 
 /* ============ 移动端 ============ */
 @media(max-width:720px){
@@ -247,6 +283,8 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
   .lvt td.ops{grid-area:ops;width:auto;text-align:right}
   .lvt .ops .acts{opacity:1;gap:5px}
   .lvt .ops .acts .mini{padding:5px 11px;font-size:13px}
+  .selbar{left:12px;right:12px;bottom:12px;transform:translateY(14px);justify-content:center}
+  .selbar.show{transform:translateY(0)}
 }
 </style></head>
 <body>
@@ -271,6 +309,26 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     <div id="pg-home" class="pg">
       <div class="pagehd"><h2>概览</h2><span class="sub">文件始终在网盘里，不占你一点空间</span></div>
       <div class="stat" id="stats"></div>
+      <div class="card" id="guide" style="display:none">
+        <div class="chd"><b>第一次用？三步走完</b><span class="csub">不用看文档，跟着点就行</span></div>
+        <div class="guide" style="margin-top:14px">
+          <div class="gstep">
+            <div class="gn"><span class="no">1</span>粘贴分享链接</div>
+            <p>去网盘复制一个分享链接（夸克 / 115 / 天翼 / 移动 / 百度都支持），粘进「分享导入」页，解析后点「加入虚拟盘」。</p>
+            <div class="go"><button class="gray" onclick="nav('import')">去导入 →</button></div>
+          </div>
+          <div class="gstep">
+            <div class="gn"><span class="no">2</span>看看收进来了什么</div>
+            <p>「媒体库」页按 网盘 / 分类 / 剧名 逐层点进去，和本地文件夹一样用；视频文件可以直接点开试播。</p>
+            <div class="go"><button class="gray" onclick="nav('lib')">去媒体库 →</button></div>
+          </div>
+          <div class="gstep">
+            <div class="gn"><span class="no">3</span>接上你的播放器</div>
+            <p>想用飞牛影视 / Emby 看，去「设置」按「STRM 导出」的说明配一遍；文件始终在你的网盘里，不占本机空间。</p>
+            <div class="go"><button class="gray" onclick="nav('set')">去设置 →</button></div>
+          </div>
+        </div>
+      </div>
       <div class="card"><div class="chd"><b>最近导入</b><span class="csub">按分享聚合 · 一行就是一部剧或一部电影</span></div><table id="recent" style="margin-top:10px"></table></div>
     </div>
     <div id="pg-import" style="display:none">
@@ -284,10 +342,11 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <div id="parseOut" style="margin-top:12px"></div>
       </div>
       <div class="card">
-        <b style="font-size:14px">已导入的分享（追更）</b>
+        <b style="font-size:14px">已导入的分享（追更）<span class="cd">一个分享链接 = 一部剧 / 一部电影 · 追更中的会自动收新剧集</span></b>
         <table id="shareList" style="margin-top:8px"></table>
         <div id="sharePager" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px"></div>
         <div class="sub" style="margin:8px 0 0">分享主追更后新增了剧集，点「刷新」重扫目录树 —— 新文件自动入库，已入库的保持不变、路径绝不变化。</div>
+        <div class="tips" style="margin:8px 0 0">行内按钮说明：<b>「刷新」</b>重扫这部剧有没有新剧集；<b>「分类」</b>事后补救——导入时分类选错了就在这里改，这部剧的所有文件会在媒体库里搬到新分类目录（已入库的剧集照常播放，不受影响），以后追更出来的新剧集也归到新分类；<b>「已失效」</b>分享挂了对它做失效清理；<b>「隐藏」</b>从列表拿掉但文件留在盘上。</div>
         <div class="sub" id="healthTip" style="margin:10px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
       </div>
     </div>
@@ -311,7 +370,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     </div>
     <div id="pg-set" style="display:none">
       <div class="pagehd"><h2>设置</h2><span class="sub">网盘取流凭证与播放器接入地址</span></div>
-      <div class="card"><b style="font-size:14px">网盘账号（取流凭证）</b>
+      <div class="card"><b style="font-size:14px">网盘账号（取流凭证）<span class="cd">解析分享不需要账号；播放取流才需要，填一次就行</span></b>
         <table id="accts" style="margin-top:8px"></table>
         <div class="sub" style="margin:8px 0 0">每个网盘只保存当前使用的账号。换号：点「退出/换号」→ 直接导入新账号即可（百度可扫码）。旧凭证的播放直链会自动作废，百度的旧临时转存文件会在后台清理，不需要重启。</div>
         <div class="row" style="margin-top:12px">
@@ -341,14 +400,14 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <div class="sub" style="margin:8px 0 0">浏览器登录网盘网页版 → F12 → 网络 → 随便一个请求 → 复制请求头里整串 Cookie 粘进来。解析分享不需要凭证，播放取流需要。</div>
       </div>
       <div class="card">
-        <b style="font-size:14px">播放器接入</b>
+        <b style="font-size:14px">播放器接入<span class="cd">把这两个地址填进对应的客户端，文件就开始流转了</span></b>
         <table style="margin-top:8px">
-          <tr><td style="width:130px;color:var(--mut);vertical-align:top">WebDAV 挂载</td><td><code id="davUrl"></code><br><small style="color:var(--mut)">给爆米花 / rclone 等客户端挂载用：可列目录、可读文件</small></td></tr>
-          <tr><td style="color:var(--mut);vertical-align:top">STRM 播放端点</td><td><code id="directUrl"></code><br><small style="color:var(--mut)">给飞牛影视 / Emby 读 .strm 用：302 跳网盘直链。和 WebDAV 各有各的地址，互不影响</small></td></tr>
+          <tr><td style="width:130px;color:var(--mut);vertical-align:top">WebDAV 挂载</td><td><code id="davUrl"></code><button class="gray copybtn" onclick="copyText('davUrl',this)" title="复制这个地址">复制</button><br><small style="color:var(--mut)">给爆米花 / rclone 等客户端挂载用：可列目录、可读文件</small></td></tr>
+          <tr><td style="color:var(--mut);vertical-align:top">STRM 播放端点</td><td><code id="directUrl"></code><button class="gray copybtn" onclick="copyText('directUrl',this)" title="复制这个地址">复制</button><br><small style="color:var(--mut)">给飞牛影视 / Emby 读 .strm 用：302 跳网盘直链。和 WebDAV 各有各的地址，互不影响</small></td></tr>
         </table>
       </div>
       <div class="card">
-        <b style="font-size:14px">STRM 导出（媒体库用）</b>
+        <b style="font-size:14px">STRM 导出（媒体库用）<span class="cd">不用飞牛 / Emby 的话，这张卡可以完全不管</span></b>
         <div class="sub" style="margin:8px 0 0">给飞牛影视 / Emby / Jellyfin 扫描的 .strm 目录。路径、对外地址、层级都按你自己的环境设，别人的配置和你无关。<br>STRM 走独立端点 <code>/direct</code>，和上面的 WebDAV 挂载各管各的：这里改目录 / 地址 / 层级只影响 .strm 文件，不会改变 WebDAV 挂载。</div>
         <table style="margin-top:8px">
           <tr><td style="width:130px;color:var(--mut);vertical-align:top">输出目录</td><td><input id="strmDir" placeholder="留空 = 启动参数 -strm" style="width:100%"><br><small style="color:var(--mut)">容器内路径；必须和 docker 挂载对应</small></td></tr>
@@ -362,9 +421,18 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
           </td></tr>
           <tr><td style="color:var(--mut)">视频后缀</td><td><input id="strmExts" placeholder=".mp4,.mkv（留空 = 全部常见格式）" style="width:100%"></td></tr>
         </table>
+        <div id="strmStale" class="banner" style="display:none">
+          <b>⚠️ 对外地址变了，存量 .strm 已失效</b><br>
+          <span id="strmStaleMsg"></span>
+        </div>
         <div class="row" style="margin-top:10px;align-items:center">
           <button onclick="saveStrm()">保存并重建</button>
+          <button class="gray" onclick="rebuildSTRM()">全量重建 STRM</button>
           <span class="sub" id="strmHint" style="margin-left:8px"></span>
+        </div>
+        <div class="tips" style="margin:8px 0 0">
+          「保存并重建」：保存上面的设置，只补有变化的部分（地址没变时媒体库基本无感）。<br>
+          「全量重建 STRM」：<b>平时不用点</b>。只有对外地址变了——换了机器、域名或端口，上面弹出红色横幅时——才需要它：会把<b>所有</b> .strm 文件重写一遍（旧地址已失效，必须换），媒体库会据此重新刮削整个库，片子多时要等一阵，属正常现象。
         </div>
       </div>
     </div>
@@ -378,6 +446,24 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     <div class="mfoot">
       <button class="gray" id="mNo" onclick="closeModal()">取消</button>
       <button class="danger" id="mYes">确定</button>
+    </div>
+  </div>
+</div>
+<div class="modal" id="catModal" onclick="if(event.target===this)closeCatModal()">
+  <div class="mbox">
+    <div class="mtitle" id="cmTitle"></div>
+    <div class="mbody" style="white-space:normal">
+      <div style="margin-bottom:10px;color:var(--mut);font-size:12.5px">导入时分类选错了？在这里事后补救：选个新分类（或输个新名字），这部剧就整体归过去。</div>
+      <div style="margin-bottom:10px">当前分类：<b id="cmCur" style="color:var(--txt)"></b></div>
+      <div class="row" style="margin-bottom:12px">
+        <select id="cmSel" style="flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCmChange()"></select>
+        <input type="text" id="cmNew" placeholder="新分类名" style="display:none;flex:1;min-width:140px">
+      </div>
+      <div style="color:var(--mut);font-size:12.5px;line-height:1.7">改分类会把这个剧在媒体库里的位置搬过去（.strm 文件跟着搬家），已入库的剧集不受影响；以后追更出来的新剧集也归到新分类。片子多时媒体库会重新刮削这一部，属正常现象。</div>
+    </div>
+    <div class="mfoot">
+      <button class="gray" onclick="closeCatModal()">取消</button>
+      <button id="cmYes" onclick="doChangeCat()">确定</button>
     </div>
   </div>
 </div>
@@ -465,6 +551,8 @@ function loadHome(){
   $('stats').innerHTML='<div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div>';
   $('recent').innerHTML='<tr><td class="loading" colspan="3"><span class="spin"></span>加载中…</td></tr>';
   loadItems(function(){
+    // 空库时显示三步引导；有任何内容就收起，概览回归数据本身
+    $('guide').style.display=ITEMS.length?'none':'';
     var total=0, byPv={}, shows={};
     ITEMS.forEach(function(it){
       total+=(it.size||0);
@@ -484,6 +572,16 @@ function loadHome(){
       var el=document.createElement('div');el.className='card';
       el.innerHTML='<div class="si g">'+ICO.refresh+'</div><b>'+arr.length+'</b><span>分享追更中</span>';
       var box=$('stats');box.insertBefore(el,box.children[3]||null);
+    }).catch(function(){});
+    // 对外地址变过：媒体库里老片子实际已播不了，概览页就给个显眼提醒
+    fetch('/api/strm/config').then(function(r){return r.json()}).then(function(d){
+      if(!d.ok||!d.stale)return;
+      var el=document.createElement('div');el.className='card';
+      el.style.borderColor='#f0c4cd';el.style.background='var(--danger2)';
+      el.innerHTML='<div class="si" style="background:#fff;color:var(--danger)">'+ICO.refresh+'</div>'+
+        '<b style="color:var(--danger);font-size:16px">STRM 待重建</b>'+
+        '<span style="color:#a12842">对外地址变了，老片子的 .strm 还指着旧地址、已播不了：去「设置」→ STRM 导出，点「全量重建 STRM」一次性修好</span>';
+      var box=$('stats');if(box)box.appendChild(el);
     }).catch(function(){});
     // 按「分享」聚合：一个分享链接 = 一部剧 / 一部电影，绝不把每一集单独铺一行
     var agg={},order=[];
@@ -538,7 +636,8 @@ function doParse(){
       '<select id="catSel" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCatChange()"></select>'+
       '<input type="text" id="catNew" placeholder="新分类名" style="display:none;flex:1;min-width:140px">'+
       '<span class="sub" style="margin:0;white-space:nowrap;font-weight:600;color:var(--txt)">剧名：</span>'+
-      '<input type="text" id="showName" style="flex:1;min-width:200px" value="'+esc(d.title)+'"></div>';
+      '<input type="text" id="showName" style="flex:1;min-width:200px" value="'+esc(d.title)+'"></div>'+
+      '<div class="tips" style="margin:0 0 10px">「分类」= 这部剧在媒体库里放的文件夹名（如「国产剧」），<b>选错了不慌</b>：导入后到分享列表点这行的「分类」随时能改。「剧名」会显示在媒体库和飞牛影视里，建议用完整片名。</div>';
     h+='<table><thead><tr><th style="width:34px"><input type="checkbox" id="ckAll" checked onchange="toggleAll(this.checked)"></th><th>分享内路径</th><th style="width:110px;text-align:right">大小</th></tr></thead><tbody id="parseRows"></tbody></table>';
     h+='<div class="row" style="margin-top:12px"><button onclick="doAdd()">加入虚拟盘</button>'+
       '<span class="sub" style="margin:0" id="selN"></span>'+
@@ -630,16 +729,18 @@ function loadShares(page){
   fetch('/api/shares?page='+SHAREPAGE+'&size='+SHARESIZE).then(function(r){return r.json()}).then(function(d){
     var arr=d.shares||[];
     SHARETOTAL=d.total||arr.length;
+    CATLIST=d.categories||[];
     // 删除/清理后当前页可能空了，自动回退一页
     if(!arr.length && SHAREPAGE>1){ loadShares(SHAREPAGE-1); return; }
-    var t='<tr><th>剧名</th><th style="width:70px;text-align:right">文件数</th><th style="width:118px;text-align:right">最近入库</th><th style="width:90px">追更</th><th style="width:206px"></th></tr>';
+    var t='<tr><th>剧名</th><th style="width:70px;text-align:right">文件数</th><th style="width:118px;text-align:right">最近入库</th><th style="width:90px">追更</th><th style="width:284px;text-align:right">操作</th></tr>';
     if(!arr.length)t+='<tr><td colspan=5><div class="empty" style="padding:30px 10px"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4.5-4.5M12 15 7.5 10.5"/><path d="M4 16.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5"/></svg></div><b>还没有导入过分享</b>粘贴一个网盘分享链接，几秒钟收进虚拟盘</div></td></tr>';
     for(var i=0;i<arr.length;i++){
       var s=arr[i];
       var st=s.auto_refresh, cat=s.category||'—';
       t+='<tr><td>'+esc(cleanShow(s.show_name))+'<div class="tmeta">'+esc(cat)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
-        '<td><button class="mini '+(st?'':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>'+
+        '<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>'+
         '<td><button class="mini" onclick="refreshShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+esc(s.passcode||'')+'\')">刷新</button> '+
+        '<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类，以后追更出来的新剧集也归新分类">分类</button> '+
         '<button class="mini danger" onclick="purgeShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+s.files+')">已失效</button> '+
         '<button class="mini gray" onclick="delShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\')">隐藏</button></td></tr>';
     }
@@ -735,6 +836,40 @@ function refreshShare(p,id,pwd){
     else toast(d.error||'刷新失败');
   });
 }
+// ---- 事后改分类 ----
+var CATLIST=[], CATM=null;
+function openCatModal(el){
+  CATM={provider:el.getAttribute('data-p'),share_id:el.getAttribute('data-id'),show:el.getAttribute('data-show')||''};
+  var cur=el.getAttribute('data-cur')||'';
+  $('cmTitle').textContent='改分类：《'+(CATM.show||'')+'》';
+  $('cmCur').textContent=cur||'不分类';
+  var s=$('cmSel');
+  var h='<option value="">不分类（直接放剧名）</option>';
+  for(var i=0;i<CATLIST.length;i++){h+='<option value="'+escA(CATLIST[i])+'">'+esc(CATLIST[i])+'</option>'}
+  h+='<option value="__new__">➕ 新建分类…</option>';
+  s.innerHTML=h;
+  s.value=(cur&&CATLIST.indexOf(cur)>=0)?cur:'';
+  $('cmNew').style.display='none';$('cmNew').value='';
+  var m=$('catModal');m.style.display='flex';requestAnimationFrame(function(){m.classList.add('show')});
+}
+function closeCatModal(){var m=$('catModal');m.classList.remove('show');setTimeout(function(){m.style.display='none'},200);CATM=null}
+function onCmChange(){
+  var v=$('cmSel').value;
+  $('cmNew').style.display=(v==='__new__'?'':'none');
+  if(v==='__new__')$('cmNew').focus();
+}
+function doChangeCat(){
+  if(!CATM)return;
+  var cat=$('cmSel').value;
+  if(cat==='__new__')cat=$('cmNew').value.trim();
+  var m=CATM;closeCatModal();
+  toast('正在改分类…');
+  fetch('/api/shares/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:m.provider,share_id:m.share_id,category:cat})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.ok){toast('已改到「'+(d.category||'不分类')+'」，'+d.moved+' 个文件换了位置');loadShares();}
+    else toast(d.error||'改分类失败');
+  }).catch(function(){toast('改分类失败')});
+}
 // ---- 媒体库（OpenList 风格：面包屑 + 逐层进入 + 勾选批量 + 整剧删除） ----
 var LIBT=null, CURPATH=[], VIEW='list', SEL=[], LIBQ='';
 function svgFolder(){return '<svg class="fdi f" viewBox="0 0 24 24"><path d="M3 6.6A2.6 2.6 0 0 1 5.6 4h3.1a1 1 0 0 1 .74.33L11 6h7.4A2.6 2.6 0 0 1 21 8.6v8.8a2.6 2.6 0 0 1-2.6 2.6H5.6A2.6 2.6 0 0 1 3 17.4Z"/></svg>'}
@@ -774,7 +909,7 @@ function loadLib(){
   loadItems(function(){ buildTree(); paintLib(); });
 }
 function paintLib(){
-  $('selbar').style.display='none';
+  $('selbar').style.display='none';$('selbar').classList.remove('show');
   if(LIBQ){
     var hit=ITEMS.filter(function(it){return ((it.dir||'')+'/'+(it.title||'')+(it.ext||'')).toLowerCase().indexOf(LIBQ)>=0});
     if(!hit.length){ $('libBox').innerHTML='<div class="empty"><div class="ei">'+svgDoc()+'</div><b>没有匹配「'+esc(LIBQ)+'」的内容</b>换个关键词试试</div>'; $('crumb').innerHTML=''; return; }
@@ -802,7 +937,7 @@ function renderLib(){
     '<th>名称</th>'+
     '<th style="width:120px;text-align:right">大小</th>'+
     '<th style="width:150px;text-align:right">修改</th>'+
-    '<th style="width:120px"></th>'+
+    '<th style="width:120px;text-align:right">操作</th>'+
     '</tr></thead><tbody>';
   dirs.forEach(function(name){
     var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
@@ -907,8 +1042,8 @@ function updLibSel(){
     for(var r=0;r<rows.length;r++){ var cb=rows[r].querySelector('.ckL'); if(cb&&cb.checked){ var a=JSON.parse(rows[r].getAttribute('data-ids')||'[]'); ids=ids.concat(a); } }
     SEL=ids;
     $('selInfo').textContent='已选 '+n+' 项';
-    $('selbar').style.display='flex';
-  } else { SEL=[]; $('selbar').style.display='none'; }
+    $('selbar').style.display='flex';requestAnimationFrame(function(){$('selbar').classList.add('show')});
+  } else { SEL=[]; $('selbar').style.display='none';$('selbar').classList.remove('show'); }
 }
 function toggleAllLib(v){
   var cks=document.querySelectorAll('#libBox .ckL');
@@ -989,6 +1124,24 @@ function copyLink(){
     }
   }).catch(function(){toast('获取失败')});
 }
+// 一键复制设置页里的地址（带剪贴板降级，复制成功按钮上给个反馈）
+function copyText(id,btn){
+  var t=$(id).textContent;
+  if(!t){toast('地址还没加载出来，稍等一下');return}
+  function ok(){
+    toast('已复制：'+t);
+    if(btn){var o=btn.textContent;btn.textContent='已复制 ✓';setTimeout(function(){btn.textContent=o},1500)}
+  }
+  function fallback(){
+    var ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy')}catch(e){}
+    document.body.removeChild(ta);
+  }
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(ok,function(){fallback();ok()});
+  }else{fallback();ok()}
+}
 // ---- 设置 ----
 function loadSet(){
   loadItems(function(){
@@ -1019,8 +1172,26 @@ function loadStrm(){
     $('strmBase').value=STRMC.base_url||'';
     $('strmLayout').value=STRMC.layout||'full';
     $('strmExts').value=(STRMC.exts||[]).join(',');
-    $('strmHint').textContent='当前生效：'+(d.dir||'—')+' · '+(d.base_url||'未配置地址');
+    var hint='当前生效：'+(d.dir||'—')+' · '+(d.base_url||'未配置地址');
+    var ba=d.built_at||'';
+    if(ba&&ba.indexOf('0001-')!==0)hint+=' · 上次重建 '+fmtTime(ba);
+    $('strmHint').textContent=hint;
+    if(d.stale){
+      $('strmStaleMsg').textContent='检测到对外地址从 '+(d.built_base||'（未知）')+' 变成了 '+(d.base_url||'（未配置）')+'：已经生成的 .strm 还指着旧地址，媒体库里的老片子会播不了。自动同步只补新增和删除、不重写旧文件（一次全重写会让媒体库把整个库重新刮削一遍，所以设成手动）。请点上面的「全量重建 STRM」一次性更新。';
+      $('strmStale').style.display='block';
+    }else{
+      $('strmStale').style.display='none';
+    }
   }).catch(function(){});
+}
+function rebuildSTRM(){
+  openModal('全量重建 STRM','把 .strm 目录按当前配置重新同步一遍。\n\n· 对外地址没变：只补新增/删除，媒体库基本无感；\n· 对外地址变了：所有文件都会重写（旧地址已失效，必须换），媒体库会重新刮削全库——片子多时要等一会儿，属正常现象。\n\n追更、导入、删除走的都是自动增量同步，不受影响。','开始重建',function(){
+    toast('正在全量重建 STRM…');
+    fetch('/api/strm/rebuild',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+      if(d.ok){toast('重建完成：写入 '+d.count+' 个 .strm');loadStrm();}
+      else toast(d.error||'重建失败');
+    }).catch(function(){toast('重建失败')});
+  });
 }
 function saveStrm(){
   toast('正在保存并重建 STRM…');
@@ -1090,7 +1261,14 @@ loadHome();
 }
 
 // loginPageHTML 登录页：登录一次发 30 天 Cookie，浏览器不用反复输密码。
-func loginPageHTML() string {
+// defUser 非空 = 密码仍是出厂默认值，此时在登录页明示默认账号密码——
+// 否则第一次用的人根本猜不到账号密码（用户实测踩坑）。密码一旦改过，
+// 调用方传空串，页面上什么提示都不出现，不泄露任何信息。
+func loginPageHTML(defUser string) string {
+	hint := ""
+	if defUser != "" {
+		hint = `<div class="dft"><b>首次使用</b>：默认账号 <b>` + defUser + `</b> · 默认密码 <b>admin</b><br>登录后请用启动参数 <code>-pass 你的密码</code> 改掉，别一直用默认的</div>`
+	}
 	return `<!doctype html>
 <html lang="zh-CN"><head>
 <meta charset="utf-8">
@@ -1098,7 +1276,7 @@ func loginPageHTML() string {
 <title>登录 · BigPan</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232080f0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 17h14l-1.5-6.5a2 2 0 0 0-2-1.5h-7a2 2 0 0 0-2 1.5Z'/%3E%3Cpath d='M12 9V4m0 0 3 3m-3-3L9 7'/%3E%3C/svg%3E">
 <style>
-:root{--bg:#f5f6f8;--card:#fff;--line:#e7e9ee;--txt:#1f2329;--mut:#8a909c;--pri:#2080f0;--pri-h:#1a6dd8;--warn:#f0a020}
+:root{--bg:#f5f6f8;--card:#fff;--line:#e7e9ee;--txt:#1f2329;--mut:#767d8c;--pri:#2080f0;--pri-h:#1a6dd8;--warn:#f0a020}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
   background:radial-gradient(1100px 560px at 12% 6%,#e2edff 0%,rgba(226,237,255,0) 60%),
@@ -1110,8 +1288,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans 
 .bico{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#2080f0,#5a9cf8);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(32,128,240,.42)}
 .bico svg{width:25px;height:25px;stroke:#fff}
 .brand b{font-size:19px;font-weight:700;letter-spacing:.2px}
-.brand small{color:var(--mut);font-size:12.5px;margin-top:-6px}
-label{display:block;font-size:12.5px;color:var(--mut);margin:15px 0 6px;font-weight:500}
+.brand small{color:var(--mut);font-size:13px;margin-top:-6px}
+label{display:block;font-size:13px;color:var(--mut);margin:15px 0 6px;font-weight:500}
 .ig{position:relative}
 .ig>svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:15px;height:15px;stroke:#9aa1ad;pointer-events:none}
 input{width:100%;padding:11px 13px;border:1px solid #dcdfe6;border-radius:10px;background:#fff;outline:none;font:inherit;transition:border-color .15s,box-shadow .15s;color:var(--txt)}
@@ -1128,10 +1306,14 @@ button:active{transform:scale(.98)}
 button:disabled{opacity:.55;cursor:default;transform:none}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:rot .7s linear infinite}
 @keyframes rot{to{transform:rotate(360deg)}}
-.err{color:var(--warn);font-size:12.5px;margin-top:13px;min-height:16px;text-align:center}
+.err{color:var(--warn);font-size:13px;margin-top:13px;min-height:16px;text-align:center}
+/* 出厂默认账号密码提示：仅在密码仍是默认值时出现（见 loginPageHTML 注释） */
+.dft{margin:0 0 2px;padding:10px 13px;background:#fdf6ea;border:1px solid #f3ddb4;border-radius:10px;font-size:13px;line-height:1.7;color:#8a5a12;text-align:left}
+.dft b{color:#6f4a0e;font-weight:700}
+.dft code{background:#f7ecd8;border-color:#eed9ac;font-size:12px}
 @keyframes shake{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(3px)}30%,50%,70%{transform:translateX(-4px)}40%,60%{transform:translateX(4px)}}
 .shake{animation:shake .4s}
-.ft{margin-top:20px;text-align:center;color:#aab0bc;font-size:11.5px}
+.ft{margin-top:20px;text-align:center;color:#a0a6b2;font-size:12px}
 </style></head>
 <body>
 <div class="card" id="card">
@@ -1139,8 +1321,7 @@ button:disabled{opacity:.55;cursor:default;transform:none}
     <span class="bico"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14l-1.5-6.5a2 2 0 0 0-2-1.5h-7a2 2 0 0 0-2 1.5Z"/><path d="M12 9V4m0 0 3 3m-3-3L9 7"/></svg></span>
     <b>BigPan</b>
     <small>无限空间，聚合分享！</small>
-  </div>
-  <label>用户名</label>
+  </div>` + hint + `<label>用户名</label>
   <div class="ig">
     <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>
     <input type="text" id="u" placeholder="用户名" autocomplete="username">

@@ -860,8 +860,17 @@ func loginHandler() http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, loginPageHTML())
+		_, _ = io.WriteString(w, loginPageHTML(defUserHint()))
 	}
+}
+
+// defUserHint 密码仍是出厂默认 "admin" 时返回当前用户名（供登录页明示默认账号密码），
+// 否则返回空串——密码改过之后，登录页不出现任何账号相关信息。
+func defUserHint() string {
+	if *flagPass == "admin" {
+		return *flagUser
+	}
+	return ""
 }
 
 // davGuard 给 WebDAV 端点套上登录校验，并让 /dav 与 /dav/ 两种写法都能直接用。
@@ -1239,7 +1248,7 @@ func main() {
 	flag.Parse()
 	log.SetFlags(log.Ltime)
 	if *flagPass == "admin" {
-		log.Printf("[安全] 正在使用默认密码 admin —— 对外网开放前请务必用 -pass 改成强密码")
+		log.Printf("[安全] 管理界面默认账号 %s / 密码 admin —— 首次登录后请务必用 -pass 改成强密码", *flagUser)
 	}
 
 	if *flagSTRM != "" {
@@ -1311,6 +1320,8 @@ func main() {
 	mux.HandleFunc("/api/share/parse", requireAuth(apiShareParse(as)))
 	mux.HandleFunc("/api/shares", requireAuth(apiShares(store)))
 	mux.HandleFunc("/api/shares/toggle", requireAuth(apiShareToggle(store)))
+	// 事后改分类：导入后发现分错了，搬目录 + 换追更登记 + 增量同步 STRM
+	mux.HandleFunc("/api/shares/category", requireAuth(apiShareCategory(store, self)))
 	mux.HandleFunc("/api/shares/", requireAuth(apiShareDelete(store)))
 	mux.HandleFunc("/api/shows/delete", requireAuth(apiShowDelete(store, self)))
 	mux.HandleFunc("/api/shares/refresh", requireAuth(apiShareRefresh(store, self)))

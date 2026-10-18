@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // strmRoot 导出根目录，由 -strm 参数指定（默认 /data/strm）。
@@ -102,6 +103,92 @@ func saveSTRMConfig() error {
 	return os.WriteFile(strmConfigPath, b, 0644)
 }
 
+// ---------------------------------------------------------------------------
+// STRM 同步状态：记住「上次同步时用的对外地址」
+//
+// 为什么需要：.strm 文件内容就是 <对外地址>/direct/... 的播放地址。地址一变
+// （换域名/换IP/换反代），存量 .strm 全部指向失效地址，必须重写 —— 而一次
+// 性重写全部文件，飞牛影视/Emby 会把整个媒体库当成新内容重新刮削（重新拉
+// 元数据、重新匹配、重新生成封面）。库小无所谓，几万部时能把服务器和 TMDB
+// 一起拖垮。所以：
+//   - 自动路径（导入/追更/删除/巡检/改分类）检测到地址变过，只做安全部分：
+//     删孤儿、写新文件；存量文件原样留着，等用户自己点「全量重建 STRM」。
+//   - 人工路径（设置页按钮 / 保存配置）才全量重写，并刷新这里记录的地址。
+// ---------------------------------------------------------------------------
+
+// strmState 上次同步完成时的状态。
+type strmState struct {
+	// BuiltBase 上次写入 .strm 使用的对外地址（strmPublicBase 的值）。
+	BuiltBase string `json:"built_base"`
+	// BuiltAt 上次同步完成时间（仅展示用）。
+	BuiltAt time.Time `json:"built_at"`
+}
+
+// strmStatePath 状态文件路径（与 strm_config.json 同目录，即 /data/strm_state.json）。
+func strmStatePath() string {
+	return filepath.Join(filepath.Dir(strmConfigPath), "strm_state.json")
+}
+
+func loadSTRMState() strmState {
+	var st strmState
+	if b, err := os.ReadFile(strmStatePath()); err == nil {
+		_ = json.Unmarshal(b, &st)
+	}
+	return st
+}
+
+func saveSTRMState(st strmState) {
+	b, _ := json.MarshalIndent(st, "", "  ")
+	_ = os.WriteFile(strmStatePath(), b, 0644)
+}
+
+// detectSTRMBase 从现有 .strm 内容反推对外地址。
+//
+// 用在状态文件丢失 / 老版本升级：盘上 .strm 都是 <base>/direct/... 或
+// <base>/play/...，取标记前的前缀即为当时用的地址。读不到返回空串
+// （调用方按「不拦截、正常同步」处理，行为与老版本一致）。
+func detectSTRMBase(root string) string {
+	var found string
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || found != "" || info == nil || info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(info.Name()), ".strm") {
+			return nil
+		}
+		b, e := os.ReadFile(p) // .strm 只有一行 URL，几 KB，直接读
+		if e != nil {
+			return nil
+		}
+		s := string(b)
+		for _, mark := range []string{"/direct/", "/play/"} {
+			if i := strings.Index(s, mark); i > 0 {
+				found = s[:i]
+				break
+			}
+		}
+		if found != "" {
+			return filepath.SkipAll // 找到一个就够，全部文件同源
+		}
+		return nil
+	})
+	return found
+}
+
+// strmStatus 汇总 STRM 同步状态（设置页展示用）。
+// 返回：是否「地址已变等待手动重建」、上次同步用的地址、当前生效地址。
+// 状态文件缺失时先从盘上 .strm 反推（只读，不落盘；落盘由 buildSTRM 负责）。
+func strmStatus(self string) (stale bool, builtBase, curBase string) {
+	st := loadSTRMState()
+	curBase = strmPublicBase(self)
+	builtBase = st.BuiltBase
+	if builtBase == "" {
+		builtBase = detectSTRMBase(strmRootDir())
+	}
+	stale = builtBase != "" && builtBase != curBase
+	return
+}
+
 // wantItem 按配置过滤条目。
 func (c *STRMConfig) wantItem(it *Item) bool {
 	if len(c.Providers) > 0 {
@@ -146,13 +233,21 @@ func apiSTRMConfig(store *Store, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
+			stale, builtBase, curBase := strmStatus(self)
+			st := loadSTRMState()
+			if st.BuiltBase == "" {
+				st.BuiltBase = builtBase
+			}
 			writeJSON(w, map[string]interface{}{
 				"ok":          true,
 				"config":      strmCfg,
 				"dir":         strmRootDir(),
 				"dir_startup": strmRoot,
-				"base_url":    strmPublicBase(self),
+				"base_url":    curBase,
 				"self":        self,
+				"built_base":  st.BuiltBase,
+				"built_at":    st.BuiltAt,
+				"stale":       stale,
 			})
 		case http.MethodPost:
 			var c STRMConfig
@@ -173,8 +268,9 @@ func apiSTRMConfig(store *Store, self string) http.HandlerFunc {
 				writeJSON(w, map[string]interface{}{"ok": false, "error": "保存失败: " + err.Error()})
 				return
 			}
+			// 用户亲手点的「保存并重建」= 人工触发：地址变过也全量重写
 			strmMu.Lock()
-			n, err := buildSTRM(store, self)
+			n, err := buildSTRM(store, self, true)
 			strmMu.Unlock()
 			if err != nil {
 				writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
@@ -189,9 +285,12 @@ func apiSTRMConfig(store *Store, self string) http.HandlerFunc {
 
 // rebuildSTRMAsync 后台串行重建 STRM。
 //
-// 用在「导入分享 / 删除条目 / 巡检清理」之后：让 .strm 与库保持强同步，
-// 又不阻塞接口响应（重建 100+ 个文件约 1~2 秒）。
+// 用在「导入分享 / 删除条目 / 改分类 / 巡检清理 / 手动刷新」之后：让 .strm
+// 与库保持强同步，又不阻塞接口响应（重建 100+ 个文件约 1~2 秒）。
 // AutoRebuild=false 时跳过（用户明确关掉了自动重建，只能手动点重建）。
+//
+// force=false：对外地址变过时只删孤儿、写新文件，存量 .strm 原样保留
+// （重写全部会让媒体库重新刮削整个库，见 strmState 注释）。
 func rebuildSTRMAsync(store *Store, self, reason string) {
 	if self == "" || !strmCfg.AutoRebuild {
 		return
@@ -199,7 +298,7 @@ func rebuildSTRMAsync(store *Store, self, reason string) {
 	go func() {
 		strmMu.Lock()
 		defer strmMu.Unlock()
-		n, err := buildSTRM(store, self)
+		n, err := buildSTRM(store, self, false)
 		if err != nil {
 			log.Printf("[strm] %s后重建失败: %v", reason, err)
 			return
@@ -208,7 +307,7 @@ func rebuildSTRMAsync(store *Store, self, reason string) {
 	}()
 }
 
-// apiSTRMRebuild 手动/脚本触发全量重建。
+// apiSTRMRebuild 手动全量重建（设置页按钮）：地址变过也全部重写。
 func apiSTRMRebuild(store *Store, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -216,13 +315,14 @@ func apiSTRMRebuild(store *Store, self string) http.HandlerFunc {
 			return
 		}
 		strmMu.Lock()
-		n, err := buildSTRM(store, self)
+		n, err := buildSTRM(store, self, true)
 		strmMu.Unlock()
 		if err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		writeJSON(w, map[string]interface{}{"ok": true, "count": n, "dir": strmRoot, "self": self})
+		_, builtBase, curBase := strmStatus(self)
+		writeJSON(w, map[string]interface{}{"ok": true, "count": n, "dir": strmRoot, "self": self, "built_base": builtBase, "base_url": curBase})
 	}
 }
 
@@ -321,15 +421,32 @@ func escapePath(p string) string {
 // 做差量：内容不一致的才写，多出来的才删，其余原样不动（mtime 不变，媒体
 // 服务器根本感知不到）——追更新集只落 1 个新文件，飞牛只刮削这一集。
 //
+// 【2026-10-19 地址变动守卫】force 区分人工与自动：
+//   - force=false（导入/追更/删除/巡检/改分类等自动路径）：若对外地址相对
+//     上次同步变过（存量 .strm 全部失效），只删孤儿、写新文件；存量文件
+//     仅因旧地址而不同的，原样保留等用户点「全量重建 STRM」——自动全量
+//     重写会让媒体库重新刮削整个库，这个决定权交给用户。
+//   - force=true（设置页按钮 / 保存配置）：地址变过也全部重写，并刷新
+//     strmState 里记录的地址。
+//
 // 清理策略不变：只删 .strm 及因此变空的目录，不碰 strmRoot 以外的任何东西，
 // 用户塞进该目录的其他文件不会误删；改名/挪目录/删片依旧自动同步（自愈）。
-func buildSTRM(store *Store, self string) (int, error) {
+func buildSTRM(store *Store, self string, force bool) (int, error) {
 	items := store.List()
 	root := strmRootDir()
 
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return 0, fmt.Errorf("建目录失败: %w", err)
 	}
+
+	base := strmPublicBase(self)
+	st := loadSTRMState()
+	if st.BuiltBase == "" {
+		// 状态文件丢失 / 老版本升级：按盘上 .strm 反推上次用的地址
+		st.BuiltBase = detectSTRMBase(root)
+	}
+	// 地址变过 = 存量 .strm 全部指向失效地址，需要全量重写（是否重写见 ④）
+	baseStale := st.BuiltBase != "" && st.BuiltBase != base
 
 	// ① 期望集合：绝对路径 → 应写内容（布局/过滤/命名规则与旧版完全一致）
 	want := make(map[string]string, len(items))
@@ -382,10 +499,18 @@ func buildSTRM(store *Store, self string) (int, error) {
 	}
 
 	// ④ 写差量：不存在或内容不一致才落盘；已一致的跳过（mtime 原样保留）
-	added, updated, failed := 0, 0, 0
+	added, updated, failed, deferred := 0, 0, 0, 0
 	for p, content := range want {
-		if b, err := os.ReadFile(p); err == nil && string(b) == content {
-			continue
+		if b, err := os.ReadFile(p); err == nil {
+			if string(b) == content {
+				continue
+			}
+			// 地址变过又是自动路径：这个文件仅仅因为旧地址而不同，
+			// 原样保留，等用户点「全量重建 STRM」一起换。
+			if baseStale && !force && string(b) == st.BuiltBase+strings.TrimPrefix(content, base) {
+				deferred++
+				continue
+			}
 		}
 		existed := have[p]
 		d := filepath.Dir(p)
@@ -418,8 +543,18 @@ func buildSTRM(store *Store, self string) (int, error) {
 		}
 	}
 
-	log.Printf("[strm] 同步完成：新增 %d、更新 %d、删除 %d、未动 %d（按配置跳过 %d，失败 %d），非夸克一律 302 直连，根目录 %s，对外地址 %s，层级 %s",
-		added, updated, del, len(have)-del-updated, skipped, failed, root, strmPublicBase(self), strmCfg.Layout)
+	// ⑥ 刷新状态：人工重建过、地址没变、或已无「等重写」的存量文件时，
+	// 记录本次用的地址。地址变过且还有存量文件等手动重建时，保持旧值不动
+	// （stale 标志要继续有效）。
+	if force || !baseStale || deferred == 0 {
+		saveSTRMState(strmState{BuiltBase: base, BuiltAt: time.Now()})
+	}
+	if baseStale && !force && deferred > 0 {
+		log.Printf("[strm] ⚠️ 对外地址已从 %s 变为 %s：%d 个存量 .strm 仍指向旧地址（媒体库里播不了），已原样保留——自动同步不重写它们，否则媒体库会把整个库重新刮削。请到设置页点「全量重建 STRM」一次性更新", st.BuiltBase, base, deferred)
+	}
+
+	log.Printf("[strm] 同步完成：新增 %d、更新 %d、删除 %d、未动 %d（按配置跳过 %d，失败 %d，等手动重建 %d），非夸克一律 302 直连，根目录 %s，对外地址 %s，层级 %s",
+		added, updated, del, len(have)-del-updated, skipped, failed, deferred, root, base, strmCfg.Layout)
 	return added + updated, nil
 }
 
