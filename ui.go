@@ -197,10 +197,13 @@ table tr:hover td{background:#f7f9fc}
 .fdi.f{fill:#4c8bf5;stroke:none}
 .fv{display:flex;align-items:center;gap:11px;cursor:pointer;width:100%;min-width:0;color:var(--txt)}
 .fv b{flex:1;min-width:0;font-weight:600;font-size:14.5px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fv .nm{display:flex;align-items:baseline;gap:5px;min-width:0;flex:1}
+.fv .nm b{flex:0 1 auto}
 .fv:hover b{color:var(--pri)}
 .fv.play .fdi{stroke:var(--pri)}
 .libsz{color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
 .libtm{color:var(--mut);font-size:13.5px;white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right}
+.dircnt{color:var(--mut);font-size:12.5px;font-weight:500;white-space:nowrap;flex:0 0 auto}
 .ops{text-align:right;width:130px;white-space:nowrap}
 .acts{opacity:0;transition:opacity .12s;display:inline-flex;gap:6px}
 .lvt tbody tr:hover .acts{opacity:1}
@@ -281,6 +284,9 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
   .lvt td.libsz{grid-area:sz;font-size:12.5px;margin-right:10px}
   .lvt td.libtm{grid-area:tm;font-size:12.5px}
   .lvt td.ops{grid-area:ops;width:auto;text-align:right}
+  /* 目录行窄屏收成单行：项数已内联在名称后，不再占第二行 */
+  .lvt tbody tr.dirrow{grid-template-areas:"ck name name ops"}
+  .lvt tbody tr.dirrow td.libsz,.lvt tbody tr.dirrow td.libtm{display:none}
   .lvt .ops .acts{opacity:1;gap:5px}
   .lvt .ops .acts .mini{padding:5px 11px;font-size:13px}
   .selbar{left:12px;right:12px;bottom:12px;transform:translateY(14px);justify-content:center}
@@ -947,11 +953,11 @@ function renderLib(){
     '</tr></thead><tbody>';
   dirs.forEach(function(name){
     var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
-    h+='<tr class="librow" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'">'+
+    h+='<tr class="librow dirrow" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'">'+
       '<td class="ckc"><input type="checkbox" class="ckL" onchange="updLibSel()"></td>'+
-      '<td><span class="fv" data-act="open">'+svgFolder()+'<b>'+esc(cleanShow(name))+'</b></span></td>'+
-      '<td class="libsz">'+cnt+' 项</td>'+
-      '<td class="libtm"></td>'+
+      '<td><span class="fv" data-act="open">'+svgFolder()+'<span class="nm"><b>'+esc(cleanShow(name))+'</b><span class="dircnt">'+cnt+' 项</span></span></span></td>'+
+      '<td class="libsz">—</td>'+
+      '<td class="libtm">—</td>'+
       '<td class="ops"><span class="acts"><button class="mini gray" data-act="open">打开</button><button class="mini danger" data-act="del">删除</button></span></td>'+
       '</tr>';
   });
