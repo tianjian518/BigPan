@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -144,4 +145,82 @@ func TestSettingsAPI(t *testing.T) {
 		t.Fatalf("POST 后开关应生效，got %d", rec.Code)
 	}
 	setQuarkTV302(false) // 收尾，别影响其他测试
+}
+
+// ---- 换 token 回归（2026-10-20 线上事故）----
+
+// pointCodeAPI 把 token 域名指到测试服务器，返回的清理函数恢复原值。
+func pointCodeAPI(t *testing.T, url string) {
+	t.Helper()
+	old := qtvCodeAPI
+	qtvCodeAPI = url
+	t.Cleanup(func() { qtvCodeAPI = old })
+}
+
+// 事故回归：换 token 请求必须带 User-Agent。
+// api.extscreen.com 前的 WAF 对无 UA 请求回 403 HTML 挑战页（Go 的 http.Client
+// 默认不发 UA 头），曾导致扫码确认后报「夸克TV登录返回无法识别」。
+// OpenList 驱动走 resty 框架自带默认 UA 所以从未暴露。
+func TestQtvExchangeTokenSendsUA(t *testing.T) {
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"code": 200, "message": "OK",
+			"data": map[string]any{"access_token": "at-1", "refresh_token": "rt-1", "expires_in": 7200},
+		})
+	}))
+	defer srv.Close()
+	pointCodeAPI(t, srv.URL)
+
+	q := NewQuarkTV("dev-1", "", "")
+	if err := q.qtvExchangeToken(context.Background(), "the-code", false); err != nil {
+		t.Fatalf("换 token 应成功，got %v", err)
+	}
+	if gotUA != qtvUA {
+		t.Fatalf("请求必须带 TV UA（WAF 拦无 UA 请求），got %q", gotUA)
+	}
+	if q.accessTokenOrEmpty() != "at-1" {
+		t.Fatal("access_token 没存进客户端")
+	}
+}
+
+// WAF 挑战页（403 HTML）不能再被一句「无法识别」带过——报错必须带 HTTP 状态和体片段。
+func TestQtvExchangeTokenWAFHTMLDiagnosable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html;charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("<html><body>WAF challenge page</body></html>"))
+	}))
+	defer srv.Close()
+	pointCodeAPI(t, srv.URL)
+
+	q := NewQuarkTV("dev-1", "", "")
+	err := q.qtvExchangeToken(context.Background(), "the-code", false)
+	if err == nil {
+		t.Fatal("403 HTML 应报错")
+	}
+	if !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "WAF challenge") {
+		t.Fatalf("报错应带 HTTP 状态与响应片段便于定位，got %v", err)
+	}
+}
+
+// 无效 code 时顶层 code 仍是 200，真错误在 data.error_info——不能误报「登录失败：OK」。
+func TestQtvExchangeTokenInvalidCodeMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"code": 200, "message": "OK",
+			"data": map[string]any{"status": -1, "errno": 11004, "error_info": "授权码Code无效"},
+		})
+	}))
+	defer srv.Close()
+	pointCodeAPI(t, srv.URL)
+
+	q := NewQuarkTV("dev-1", "", "")
+	err := q.qtvExchangeToken(context.Background(), "bad-code", false)
+	if err == nil || !strings.Contains(err.Error(), "授权码Code无效") {
+		t.Fatalf("无效 code 应报 data.error_info，got %v", err)
+	}
 }

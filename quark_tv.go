@@ -34,8 +34,6 @@ import (
 const (
 	// qtvAPIBase TV 开放接口域名（QuarkTV；UC TV 变体是 open-api-drive.uc.cn，暂不接）。
 	qtvAPIBase = "https://open-api-drive.quark.cn"
-	// qtvCodeAPI 扫码登录换 token 的域名（驱动同款：api.extscreen.com/quarkdrive）。
-	qtvCodeAPI = "http://api.extscreen.com/quarkdrive"
 	// qtvClientID / qtvSignKey TV 端 App 的客户端标识与签名密钥（驱动源码常量）。
 	qtvClientID = "d3194e61504e493eb6222857bccfed94"
 	qtvSignKey  = "kw2dvtd7p4t3pjl2d9ed9yc8yej8kw2d"
@@ -44,6 +42,10 @@ const (
 	// qtvUA 伪装成小米电视（驱动源码同款；只用于 TV 接口请求，直链本身不校验 UA）。
 	qtvUA = "Mozilla/5.0 (Linux; U; Android 13; zh-cn; M2004J7AC Build/UKQ1.231108.001) AppleWebKit/533.1 (KHTML, like Gecko) Mobile Safari/533.1"
 )
+
+// qtvCodeAPI 扫码登录换 token 的域名（驱动同款：api.extscreen.com/quarkdrive）。
+// 声明成 var 而非 const：单测里要指向 httptest 服务器。
+var qtvCodeAPI = "http://api.extscreen.com/quarkdrive"
 
 // 设备参数（驱动源码同款，固定值，伪装 M2004J7AC 电视）。
 const (
@@ -216,10 +218,15 @@ func (q *QuarkTV) QRCode(ctx context.Context, queryToken string) (code string, e
 }
 
 // qtvTokenResp 换 token 的返回结构（codeApi 域名，非开放接口域名）。
+// 注意 Data 里的 status/errno/error_info：无效 code 时顶层 code 仍是 200，
+// 真错误藏在 data 里（实测 errno=11004「授权码Code无效」）。
 type qtvTokenResp struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
+		Status       int    `json:"status"`
+		Errno        int    `json:"errno"`
+		ErrorInfo    string `json:"error_info"`
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
@@ -246,6 +253,10 @@ func (q *QuarkTV) qtvExchangeToken(ctx context.Context, codeOrRefresh string, is
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// User-Agent 必须带：api.extscreen.com 前面有 WAF，对「无 UA 头」的请求
+	// 直接回 403 + HTML 挑战页（2026-10-20 实测，Go 默认不发 UA，踩过）。
+	// OpenList 驱动走 resty 框架自带默认 UA，所以驱动侧从未暴露此问题。
+	req.Header.Set("User-Agent", qtvUA)
 	resp, err := q.hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("连接夸克TV登录服务失败：%w", err)
@@ -257,10 +268,15 @@ func (q *QuarkTV) qtvExchangeToken(ctx context.Context, codeOrRefresh string, is
 	}
 	var out qtvTokenResp
 	if err := json.Unmarshal(data, &out); err != nil {
-		return fmt.Errorf("夸克TV登录返回无法识别")
+		return fmt.Errorf("夸克TV登录返回无法识别（HTTP %d）：%s", resp.StatusCode, qtvSnippet(data))
 	}
 	if out.Code != 200 || out.Data.RefreshToken == "" {
-		msg := out.Message
+		// 注意：无效 code 时顶层 code 仍是 200，真错误在 data.status/errno/error_info
+		//（实测：code=200 但 data.errno=11004「授权码Code无效」），先取 data 里的。
+		msg := out.Data.ErrorInfo
+		if msg == "" {
+			msg = out.Message
+		}
 		if msg == "" {
 			msg = fmt.Sprintf("code=%d", out.Code)
 		}
@@ -286,6 +302,18 @@ func bodyToMap(v url.Values) map[string]string {
 		}
 	}
 	return m
+}
+
+// qtvSnippet 把非 JSON 响应体截一段出来供报错定位（WAF 挑战页等场景）。
+func qtvSnippet(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > 120 {
+		s = s[:120] + "…"
+	}
+	if s == "" {
+		s = "(空响应)"
+	}
+	return s
 }
 
 // LoginWithCode 扫码确认后走这里：code 换 token，返回 refresh_token（供入库）。
