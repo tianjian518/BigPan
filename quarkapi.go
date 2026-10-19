@@ -203,12 +203,13 @@ func scanQuarkShare(pwdID, passcode string) (title string, files []ShareFile, er
 				}
 				continue
 			}
-			if isVideo(f.Name) {
-				files = append(files, ShareFile{
-					ID: f.FID, Name: f.Name, Size: f.Size, Path: p,
-					Code: pwdID, Pwd: passcode,
-				})
-			}
+		if isVideo(f.Name) {
+			files = append(files, ShareFile{
+				ID: f.FID, Name: f.Name, Size: f.Size, Path: p,
+				Code: pwdID, Pwd: passcode,
+				FidToken: f.ShareFidToken, // 转存要用，随文件带回前端再入库
+			})
+		}
 		}
 	}
 	if len(files) == 0 {

@@ -533,9 +533,21 @@ func directGuard(store *Store) http.Handler {
 			if dec, err := url.PathUnescape(name); err == nil {
 				name = dec
 			}
-			it := store.FindByName(name)
-			if it != nil {
-				u, err := resolveDirectURL(it)
+		it := store.FindByName(name)
+		if it != nil {
+			// 夸克 + 开关关着：分享直链绑登录会话，客户端直连会被 412 拒，
+			// 不能 302 —— 转交 /play 走本机中转（开关关着时生成的存量
+			// /direct .strm 靠这条路继续播；开关开着时根本不会写 /direct 夸克）。
+			if strings.EqualFold(it.Provider, "quark") && !quarkTV302Enabled() {
+				v := url.Values{}
+				v.Set("id", it.ID)
+				if it.Size > 0 {
+					v.Set("size", fmt.Sprintf("%d", it.Size))
+				}
+				http.Redirect(w, r, "/play/"+url.PathEscape(it.FileName())+"?"+v.Encode(), http.StatusFound)
+				return
+			}
+			u, err := resolveDirectURL(it)
 				if err != nil {
 					log.Printf("  [直链] %s 解析失败: %v", it.FileName(), err)
 					http.Error(w, "取直链失败: "+err.Error(), http.StatusBadGateway)
@@ -589,13 +601,33 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 		// 取播放目标：分享条目先实时解析出直链
 		var it *Item
 		var target string
-		if id := q.Get("id"); id != "" {
-			it = store.FindByID(id)
-			if it == nil {
-				http.Error(w, "条目不存在", http.StatusNotFound)
-				return
-			}
+	if id := q.Get("id"); id != "" {
+		it = store.FindByID(id)
+		if it == nil {
+			http.Error(w, "条目不存在", http.StatusNotFound)
+			return
 		}
+	}
+
+	// 夸克 + 开关开着：不走本机中转，内部解析出 TV 免认证直链后回 302，
+	// 客户端直连网盘 CDN，数据不经过本机（存量 /play .strm 的兼容路——
+	// 开关关着时生成的 /play 地址，开关打开后照样能播）。
+	if it != nil && strings.EqualFold(it.Provider, "quark") && quarkTV302Enabled() {
+		u, uerr := resolveDirectURL(it)
+		if uerr != nil {
+			if it.IsShare() {
+				log.Printf("  [%s] 取流失败: %v", it.Provider, uerr)
+			}
+			http.Error(w, "取流失败: "+uerr.Error(), http.StatusBadGateway)
+			return
+		}
+		// 禁止缓存 302 目标：直链几秒~几分钟内过期，缓存后第二次播放拿死链。
+		w.Header().Set("Cache-Control", "no-store, max-age=0")
+		w.Header().Set("Pragma", "no-cache")
+		log.Printf("  [直链] %s → 302 跳转（夸克 TV，数据不经过本机）", it.FileName())
+		http.Redirect(w, r, u, http.StatusFound)
+		return
+	}
 
 		conc := *flagConc
 		if v := q.Get("conc"); v != "" {
@@ -1025,7 +1057,9 @@ func davGuard(h http.Handler, store *Store, self string) http.Handler {
 		}
 		// 【按网盘智能路由】支持直连的网盘（如移动云盘），GET/HEAD 文件时
 		// 直接 302 跳到网盘直链，客户端自己去 CDN 拉 —— 数据不经过本机，
-		// 不占家宽上行，高码率原盘也能流畅。夸克这类绑会话的仍走加速中转。
+		// 不占家宽上行，高码率原盘也能流畅。夸克默认绑会话走加速中转；
+		// 用户打开「夸克 TV 302」开关后 Wants302() 变 true，这里自动跟随，
+		// 同样走 302（TV 免认证直链）。
 		//
 		// 全程 302 模式（2026-10-16 应用户要求）：Wants302 网盘（百度/移动）
 		// 解析失败时直接返回 502，不再回落本地中转 —— 中转会把全部视频流量
@@ -1399,6 +1433,10 @@ func main() {
 		log.Fatalf("加载账号库失败: %v", err)
 	}
 	globalAccounts = as // 供各网盘 provider 取凭证
+	globalStore = store  // 供播放链路回写条目字段（如夸克转存后的 TVFID）
+
+	// 全局播放设置（settings.json，与条目库同目录）
+	loadAppSettings(settingsPath(*flagData))
 
 	// 分享追更登记（shares.json，与条目同目录）
 	if gs, err := NewShareStore(filepath.Join(filepath.Dir(*flagData), "shares.json")); err != nil {
@@ -1442,8 +1480,13 @@ func main() {
 	mux.HandleFunc("/api/items/", requireAuth(apiItemDelete(store)))
 	mux.HandleFunc("/api/login/115/start", requireAuth(apiLoginStart))
 	mux.HandleFunc("/api/login/115/poll", requireAuth(apiLoginPoll(as)))
+	// 全局播放设置（夸克 TV 302 开关等）：GET 读 / POST 改，改完立即生效
+	mux.HandleFunc("/api/settings", requireAuth(apiSettings()))
 	mux.HandleFunc("/api/login/baidu/start", requireAuth(apiLoginStartBaidu))
 	mux.HandleFunc("/api/login/baidu/poll", requireAuth(apiLoginPollBaidu(as)))
+	// 夸克 TV 扫码登录（与夸克普通 Cookie 登录并存，同一 provider 两种登录方式）
+	mux.HandleFunc("/api/login/quark/start", requireAuth(apiLoginStartQuark))
+	mux.HandleFunc("/api/login/quark/poll", requireAuth(apiLoginPollQuark(as)))
 	mux.HandleFunc("/api/quark/import", requireAuth(apiQuarkImport(as)))
 	mux.HandleFunc("/api/quark/list", requireAuth(apiQuarkList(as)))
 	mux.HandleFunc("/api/quark/add", requireAuth(apiQuarkAdd(store, as)))

@@ -391,8 +391,10 @@ func strmItemDir(it *Item) string {
 //	strm URL(quark)  = http://host/play/文件名.mkv?id=xxx
 func itemPlayURL(it *Item, self string) string {
 	base := strmPublicBase(self)
-	// 夸克例外：无法 302，只能本机中转。
-	if strings.EqualFold(it.Provider, "quark") {
+	// 夸克例外：无法 302，只能本机中转 —— 但用户打开「夸克 TV 302」开关后，
+	// 取链走 TV 免认证直链（可 302），这时跟其他网盘一样写 /direct/。
+	// 开关关着才写 /play/（现状）。存量 .strm 双向兼容，切开关不用重生成。
+	if strings.EqualFold(it.Provider, "quark") && !quarkTV302Enabled() {
 		v := url.Values{}
 		if it.IsShare() || it.URL == "" {
 			v.Set("id", it.ID)

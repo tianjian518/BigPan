@@ -28,6 +28,13 @@ type Account struct {
 	Label    string    `json:"label"`    // 显示名称（昵称或 ID）
 	Cookie   string    `json:"cookie"`   // 凭证字符串
 	LoginAt  time.Time `json:"login_at"`
+
+	// —— 夸克 TV（provider="quark_tv"）专用字段 ——
+	// 单账号模型下 Cookie 字段复用：TV 账号的 Cookie 存 refresh_token（长期有效）。
+	// access_token 是短命凭证，这里存一份避免每次播放都刷新；播放中 token 被
+	// 刷新后由客户端回写（见 quark_tv.go 的 onRefresh）。
+	DeviceID    string `json:"device_id,omitempty"`
+	AccessToken string `json:"access_token,omitempty"`
 }
 
 // AccountStore 账号持久化（JSON 文件）。
@@ -65,6 +72,9 @@ func (s *AccountStore) List() []Account {
 }
 
 func (s *AccountStore) Get(provider string) *Account {
+	if s == nil { // 账号库未就绪（理论只发生在启动前的测试里），视为未登录
+		return nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for i := range s.list {
@@ -113,6 +123,12 @@ func (s *AccountStore) Delete(provider string) bool {
 func retireOldAccount(old Account) {
 	dropAllPlayTargets()
 	log.Printf("[账号] %s 旧凭证已停用（%s），播放直链缓存已清空", providerCN(old.Provider), old.Label)
+	// 夸克临时目录 fid 是「旧号盘里」的目录，换号/退号后必须重新确认
+	// （新号的盘里没有 /bigpan_tmp/quark，复用旧 fid 会转存失败）。
+	if old.Provider == "quark" || old.Provider == "quark_tv" {
+		quarkTmpDirReset()
+		quarkTempReset()
+	}
 	if old.Provider == "baidu" && old.Cookie != "" {
 		go func(ck, label string) {
 			time.Sleep(10 * time.Second) // 给正在播放的请求一点缓冲
@@ -209,6 +225,8 @@ func qrGC() {
 			delete(qrSessions, id)
 		}
 	}
+	// 夸克 TV 扫码会话（独立锁+独立 map，10 分钟同策略）
+	qtvQRGC()
 }
 
 // startQR115 发起一次 115 扫码会话，并在后台自动轮询状态。
@@ -518,7 +536,13 @@ func apiAccounts(as *AccountStore) http.HandlerFunc {
 				return
 			}
 			prov := rest[1:]
-			if uninstallAccount(as, prov) {
+			ok := uninstallAccount(as, prov)
+			// 夸克是「一个入口、两种凭证」：Cookie（quark）与扫码（quark_tv）
+			// 一起退，避免用户退了一种以为全退了，前端也说不清哪个还活着。
+			if prov == "quark" && uninstallAccount(as, "quark_tv") {
+				ok = true
+			}
+			if ok {
 				writeJSON(w, map[string]interface{}{
 					"ok":   true,
 					"note": "已退出。播放直链缓存已清空，导入新账号后立即生效。",

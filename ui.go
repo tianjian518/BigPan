@@ -381,6 +381,21 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <table id="accts" style="margin-top:10px"></table>
       </div>
       <div class="card">
+        <b style="font-size:14px">夸克播放模式<span class="cd">只影响夸克，其他网盘怎么走跟这里无关</span></b>
+        <div class="sub" style="margin:8px 0 0">夸克的分享直链绑着登录状态，播放器直接连会被拒，所以有两种走法，二选一：</div>
+        <table style="margin-top:8px">
+          <tr><td style="width:130px;color:var(--mut);vertical-align:top">走法</td><td>
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="quarkTV302" onchange="saveQuarkTV302()"> 开启「302 直连」</label><br>
+            <small style="color:var(--mut)">
+              <b>关闭</b>（默认）：数据经过本机转发。<b>家用盒子</b>用这个，省心，对账号名额也没要求。<br>
+              <b>开启</b>：播放器直连夸克服务器拉数据，<b>不经过本机、不耗服务器流量</b>。<b>云服务器部署必须开</b>（否则流量全走服务器）。<br>
+              开启的条件：上面「夸克网盘」<b>两种登录都连上</b>——Cookie 负责播放时把文件转存到临时目录，扫码负责取免认证直链，缺一个都放不了。<br>
+              切换<b>立即生效</b>：已经生成的 .strm 一个都不用重建，两种走法互相兼容。
+            </small>
+          </td></tr>
+        </table>
+      </div>
+      <div class="card">
         <b style="font-size:14px">播放器接入<span class="cd">把这两个地址填进对应的客户端，文件就开始流转了</span></b>
         <table style="margin-top:8px">
           <tr><td style="width:130px;color:var(--mut);vertical-align:top">WebDAV 挂载</td><td><code id="davUrl"></code><button class="gray copybtn" onclick="copyText('davUrl',this)" title="复制这个地址">复制</button><br><small style="color:var(--mut)">给爆米花 / rclone 等客户端挂载用：可列目录、可读文件</small></td></tr>
@@ -1143,6 +1158,21 @@ function loadSet(){
   });
   loadAccts();
   loadStrm();
+  loadSettings();
+}
+// ---- 全局播放设置（夸克 TV 302 开关）----
+function loadSettings(){
+  fetch('/api/settings').then(function(r){return r.json()}).then(function(d){
+    if(d.ok&&d.settings)$('quarkTV302').checked=!!d.settings.quark_tv_302;
+  }).catch(function(){});
+}
+function saveQuarkTV302(){
+  var on=$('quarkTV302').checked;
+  fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({quark_tv_302:on})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.ok)toast(on?'已开启：夸克改走 302 直连（立即生效）':'已关闭：夸克改回本机中转（立即生效）');
+    else{toast(d.error||'保存失败');$('quarkTV302').checked=!on}
+  }).catch(function(){toast('网络错误，重试看看');$('quarkTV302').checked=!on});
 }
 // ---- STRM 导出配置 ----
 var STRMC=null;
@@ -1202,10 +1232,14 @@ var PV_LIST=[
   {pv:'mobile139',name:'移动云盘'}
 ];
 // 连接方式配置。methods：scan=扫码 / cookie=粘贴。
-// 夸克一期只开放 Cookie；二期接夸克TV扫码时，在 quark.methods 里加 'scan'、
-// 填上 scanStart/scanPoll/scanSteps，UI 自动出方式切换，别处不用动。
+// 夸克二期已接夸克TV扫码：同一「夸克网盘」入口下，
+//   扫码 Tab → 夸克TV（302 直链取流），Cookie Tab → 夸克普通（分享转存取流）。
+// 两个凭证分别以 provider="quark_tv" / "quark" 存入账号库，互不干扰。
 var PV_CONN={
-  quark:{name:'夸克网盘',methods:['cookie'],importApi:'/api/quark/import',
+  quark:{name:'夸克网盘',methods:['scan','cookie'],importApi:'/api/quark/import',
+    scanStart:'/api/login/quark/start',scanPoll:'/api/login/quark/poll',
+    scanSteps:['打开手机上的夸克 TV / 当贝 / 电视版 App（或夸克 App 的 TV 登录入口）','用 App 里的「扫码登录」扫下面的码','手机上点<b>「确认登录」</b>，本页面自动变成「登录成功」'],
+    scanNote:'两种登录各自独立、建议都连上：<b>扫码</b>走夸克TV，播放时给 302 直链（不耗本机流量）；<b>Cookie</b>走夸克普通版，分享转存才用它。',
     cookiePh:'夸克 Cookie 整串',
     steps:['电脑浏览器打开 <code>pan.quark.cn</code>，登录你的夸克','按键盘 <b>F12</b> → 点上面「网络 / Network」','左边随便点一个请求 → 请求头里找到 <b>Cookie</b> → 整串复制','粘到下面框里，点「导入连接」']},
   '115':{name:'115网盘',methods:['scan','cookie'],importApi:'/api/accounts/import',
@@ -1230,7 +1264,29 @@ function loadAccts(){
     var t='<tr><th style="width:110px">网盘</th><th>状态</th><th style="width:100px;text-align:right">操作</th></tr>';
     for(var j=0;j<PV_LIST.length;j++){
       var p=PV_LIST[j],a=map[p.pv];
-      if(a){
+      if(p.pv==='quark'){
+        // 夸克一个入口两种凭证：quark=Cookie（转存取流），quark_tv=扫码（302 直链）
+        var tv=map['quark_tv'];
+        if(a&&tv){
+          t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
+            '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">Cookie + 扫码（302）</span></td>'+
+            '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
+        }else if(a){
+          t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
+            '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">'+esc(a.label||'')+' · '+fmtTime(a.login_at)+'</span><br>'+
+            '<span class="cd" style="color:var(--warn)">再扫码登录一次，可解锁 302 直链播放</span></td>'+
+            '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
+        }else if(tv){
+          t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
+            '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">扫码登录 · '+fmtTime(tv.login_at)+'</span><br>'+
+            '<span class="cd" style="color:var(--warn)">再导入 Cookie，分享转存才好用</span></td>'+
+            '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
+        }else{
+          t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
+            '<td style="color:var(--mut)">未连接<span class="cd" style="margin-left:6px">播放取流前要连上</span></td>'+
+            '<td style="text-align:right"><button class="mini" onclick="openConn(\''+p.pv+'\')">连接</button></td></tr>';
+        }
+      }else if(a){
         t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
           '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">'+esc(a.label||'')+' · '+fmtTime(a.login_at)+'</span></td>'+
           '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
@@ -1282,7 +1338,7 @@ function renderConn(m){
     h+='<div style="text-align:center"><img id="connQRImg" src="" style="width:200px;height:200px;border-radius:8px;background:#fff;border:1px solid var(--line)"></div>';
     h+='<div id="connQRMsg" style="margin-top:10px;text-align:center;font-size:13.5px;color:var(--mut)">正在获取二维码…</div>';
     h+='<div id="connQRTTL" style="margin-top:4px;text-align:center;font-size:12.5px;color:var(--mut)"></div>';
-    h+='<div class="sub" style="margin-top:12px">扫码没反应或反复失败？切到「粘贴 Cookie」方式，基本不会失败。</div>';
+    h+='<div class="sub" style="margin-top:12px">'+(c.scanNote||'扫码没反应或反复失败？切到「粘贴 Cookie」方式，基本不会失败。')+'</div>';
   }
   $('connPane').innerHTML=h;
   if(m==='cookie'){var el=$('connCk');if(el)el.focus()}

@@ -32,6 +32,14 @@ type Item struct {
 	Passcode string `json:"passcode,omitempty"` // 提取码
 	FileID   string `json:"file_id,omitempty"`  // 分享内文件 ID
 
+	// —— 夸克 TV 302 专用字段（普通用户无感，开关打开时才用上）——
+	// FidToken 分享文件的访问令牌（share_fid_token），播放时转存要用；
+	// 导入分享时一并入库，避免播放时再扫整棵分享树。
+	FidToken string `json:"fid_token,omitempty"`
+	// TVFID 转存到「自己盘」后的文件 fid（夸克 TV 接口只认自己盘的文件）。
+	// 播过一次就有；被 sweeper 清掉后取链失败会自动重转存，用户无感。
+	TVFID string `json:"tv_fid,omitempty"`
+
 	// 静态直链（兼容：手动填 URL 的老用法）
 	URL string `json:"url,omitempty"`
 

@@ -36,6 +36,11 @@ type QuarkFile struct {
 	Size  int64  `json:"size"`
 	IsDir bool   `json:"dir"`
 	Pdir  string `json:"pdir_fid"`
+	// UpdatedAt 修改时间（毫秒时间戳）——sweeper 盘扫时按它判断新旧
+	UpdatedAt int64 `json:"updated_at"`
+	// ShareFidToken 分享文件的访问令牌 —— 播放时转存（share/save）要用，
+	// 只在分享目录列表接口里返回。
+	ShareFidToken string `json:"share_fid_token"`
 }
 
 // setJarCookies 把 "k=v; k2=v2" 写入 cookie jar（作用于 .quark.cn 全域，

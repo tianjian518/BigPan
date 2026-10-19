@@ -14,6 +14,10 @@ import (
 // 全局账号库引用（由 main 注入，供各 provider 取凭证）
 var globalAccounts *AccountStore
 
+// 全局条目库引用（由 main 注入，播放链路回写条目字段用，
+// 如夸克 TV 302 转存后的 fid 缓存 Item.TVFID、刷新后的分享令牌）
+var globalStore *Store
+
 // ---- 夸克 ----
 
 type quarkProvider struct{}
@@ -46,10 +50,18 @@ func (quarkProvider) RefreshShare(shareID, passcode string) (string, []ShareFile
 	return scanQuarkShare(shareID, passcode)
 }
 
-// Wants302 夸克直链绑登录会话，302 会被 412 拒绝 —— 必须本地中转加速。
-func (quarkProvider) Wants302() bool { return false }
+// Wants302 夸克直链绑登录会话，302 会被 412 拒绝 —— 默认必须本地中转加速。
+// 但用户打开「夸克 TV 302」开关后，取链走的是 TV 免认证直链（见 ResolvePlay），
+// 那时就可以 302 了。WebDAV 侧（main.go 的 /dav 分支）读的就是这个方法，
+// 这里改动态，那边零改动自动跟随。
+func (quarkProvider) Wants302() bool { return quarkTV302Enabled() }
 
 func (quarkProvider) ResolvePlay(item *Item) (PlayTarget, error) {
+	// 开关打开：转存到临时目录 → TV 接口取免认证直链（UA/Cookie 全空，可 302）。
+	// 开关关闭：现状 —— 分享直链绑登录会话，本机中转。
+	if quarkTV302Enabled() {
+		return quarkTVPlayTarget(item)
+	}
 	q := quarkClient(globalAccounts)
 	if q == nil {
 		return PlayTarget{}, fmt.Errorf("还没有导入夸克凭证（取流需要登录，解析分享不需要）")

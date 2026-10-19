@@ -1,0 +1,256 @@
+package main
+
+// ---------------------------------------------------------------------------
+// 夸克 TV 扫码登录：会话管理 + HTTP 接口 + 客户端工厂
+//
+// 与 115/百度的扫码共用同一套交互模式（后台 watch 轮询 + 前端 poll 快照），
+// 但 session 结构独立（115 的 qrSession 绑死了 115 driver 类型）。
+// 账号以 provider="quark_tv" 存入 AccountStore，与 "quark"（PC cookie）并存。
+// ---------------------------------------------------------------------------
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+)
+
+// qtvQRSession 一次夸克 TV 扫码会话。
+type qtvQRSession struct {
+	id          string
+	qtv         *QuarkTV
+	queryToken  string
+	status      int // 0 等待扫码 / 1 已扫码待确认 / 2 已确认 / -1 过期 / -2 失败
+	message     string
+	refreshToken string
+	deviceID    string
+	label       string
+	done        bool
+	err         string
+	created     time.Time
+}
+
+var (
+	qtvQRMu       sync.Mutex
+	qtvQRSessions = map[string]*qtvQRSession{}
+)
+
+// qtvQRGC 清理超过 10 分钟的会话（与 115 的 qrGC 同策略，在 qrGC 里一并调用）。
+func qtvQRGC() {
+	qtvQRMu.Lock()
+	defer qtvQRMu.Unlock()
+	for id, s := range qtvQRSessions {
+		if time.Since(s.created) > 10*time.Minute {
+			delete(qtvQRSessions, id)
+		}
+	}
+}
+
+// startQRQuarkTV 发起一次夸克 TV 扫码会话，后台自动轮询。
+func startQRQuarkTV() (*qtvQRSession, error) {
+	qtvQRGC()
+	qtv := NewQuarkTV("", "", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	qrData, queryToken, err := qtv.QRStart(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("获取二维码失败：%w", err)
+	}
+	// 二维码图是 base64 JPEG，前端 <img src="data:image/jpeg;base64,..."> 直接用；
+	// 这里统一补成 data URI，和 115/百度的返回形态保持一致。
+	qrURI := "data:image/jpeg;base64," + qrData
+	s := &qtvQRSession{
+		id:         newID(),
+		qtv:        qtv,
+		queryToken: queryToken,
+		status:     0,
+		message:    "等待扫码",
+		created:    time.Now(),
+	}
+	// 二维码图放 message 里带走（前端从快照的 qr 字段取），见 pollQRQuarkTV。
+	s.label = qrURI
+	qtvQRMu.Lock()
+	qtvQRSessions[s.id] = s
+	qtvQRMu.Unlock()
+	go s.watch()
+	return s, nil
+}
+
+// watch 后台轮询扫码状态（2 秒一轮，5 分钟超时）。
+func (s *qtvQRSession) watch() {
+	deadline := time.Now().Add(5 * time.Minute)
+	fails := 0
+	for {
+		time.Sleep(2 * time.Second)
+
+		qtvQRMu.Lock()
+		if s.done {
+			qtvQRMu.Unlock()
+			return
+		}
+		qtvQRMu.Unlock()
+
+		if time.Now().After(deadline) {
+			qtvQRMu.Lock()
+			s.status, s.message, s.done = -1, "二维码已过期，请重新获取", true
+			qtvQRMu.Unlock()
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		code, err := s.qtv.QRCode(ctx, s.queryToken)
+		cancel()
+		if err != nil {
+			fails++
+			if fails >= 8 {
+				qtvQRMu.Lock()
+				s.message = fmt.Sprintf("⚠️ 网络受限，正在重试（已失败 %d 次）", fails)
+				qtvQRMu.Unlock()
+			}
+			continue
+		}
+		fails = 0
+
+		if code == "" {
+			// 未扫码或已扫码未确认：保持等待态（TV 接口不区分这两种状态，
+			// 统一提示等待，确认前用户看到的就是「等待扫码」）。
+			continue
+		}
+
+		// 已确认：换 token
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)
+		refreshToken, err := s.qtv.LoginWithCode(ctx2, code)
+		cancel2()
+		qtvQRMu.Lock()
+		if err != nil {
+			s.err = fmt.Sprintf("登录失败: %v", err)
+			s.message, s.status, s.done = s.err, -2, true
+		} else {
+			s.refreshToken = refreshToken
+			s.deviceID = s.qtv.DeviceID()
+			s.status, s.message, s.done = 2, "登录成功", true
+		}
+		qtvQRMu.Unlock()
+		return
+	}
+}
+
+// qtvQRSnapshot 扫码会话快照（字段与 115 的 qrSnapshot 对齐，外加 qr 图）。
+type qtvQRSnapshot struct {
+	Status       int
+	Message      string
+	Done         bool
+	QR           string // data URI，仅在 start 时由调用方一并取走
+	RefreshToken string
+	DeviceID     string
+	Label        string
+	Err          string
+}
+
+// pollQRQuarkTV 读取会话快照（纯内存，不发请求）。
+func pollQRQuarkTV(id string) (*qtvQRSnapshot, error) {
+	qtvQRMu.Lock()
+	defer qtvQRMu.Unlock()
+	s, ok := qtvQRSessions[id]
+	if !ok {
+		return nil, fmt.Errorf("会话不存在或已过期")
+	}
+	return &qtvQRSnapshot{
+		Status:       s.status,
+		Message:      s.message,
+		Done:         s.done,
+		QR:           s.label, // start 时暂存在 label 里（见 startQRQuarkTV）
+		RefreshToken: s.refreshToken,
+		DeviceID:     s.deviceID,
+		Err:          s.err,
+	}, nil
+}
+
+// apiLoginStartQuark 开始扫码：POST /api/login/quark/start
+func apiLoginStartQuark(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s, err := startQRQuarkTV()
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":  true,
+		"sid": s.id,
+		"qr":  s.label,
+		"ttl": 300,
+	})
+}
+
+// apiLoginPollQuark 轮询扫码状态：GET /api/login/quark/poll?sid=xxx
+func apiLoginPollQuark(as *AccountStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid := r.URL.Query().Get("sid")
+		snap, err := pollQRQuarkTV(sid)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		resp := map[string]interface{}{
+			"ok":      true,
+			"status":  snap.Status,
+			"message": snap.Message,
+			"done":    snap.Done,
+			"qr":      snap.QR,
+		}
+		if snap.Err != "" {
+			resp["error"] = snap.Err
+		}
+		if snap.Done && snap.RefreshToken != "" {
+			// 落盘前先验证：用新 refresh_token 换一次 access_token 并探活
+			qtv := NewQuarkTV(snap.DeviceID, "", snap.RefreshToken)
+			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+			verr := qtv.RefreshToken(ctx)
+			cancel()
+			if verr != nil {
+				resp["error"] = "凭证验证失败: " + verr.Error()
+			} else {
+				installAccount(as, Account{
+					Provider:    "quark_tv",
+					Label:       "夸克TV（扫码登录）",
+					Cookie:      snap.RefreshToken, // 单账号模型：Cookie 字段复用存 refresh_token
+					DeviceID:    snap.DeviceID,
+					AccessToken: qtv.accessTokenOrEmpty(),
+					LoginAt:     time.Now(),
+				})
+			}
+		}
+		writeJSON(w, resp)
+	}
+}
+
+// accessTokenOrEmpty 取当前 access_token（探活用，落库那份）。
+func (q *QuarkTV) accessTokenOrEmpty() string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.accessToken
+}
+
+// quarkTVClient 从账号库构造夸克 TV 客户端；未登录返回 nil。
+// token 刷新后自动回写账号库（避免容器重启后丢掉新 token）。
+func quarkTVClient(as *AccountStore) *QuarkTV {
+	a := as.Get("quark_tv")
+	if a == nil || a.Cookie == "" { // Cookie 字段存的是 refresh_token
+		return nil
+	}
+	q := NewQuarkTV(a.DeviceID, a.AccessToken, a.Cookie)
+	q.onRefresh = func(accessToken, refreshToken string) {
+		cur := as.Get("quark_tv")
+		if cur == nil {
+			return
+		}
+		cur.AccessToken = accessToken
+		cur.Cookie = refreshToken
+		as.Put(*cur)
+	}
+	return q
+}

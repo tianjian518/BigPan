@@ -62,6 +62,9 @@ type ShareFile struct {
 	Path  string `json:"path"` // 在分享内的路径
 	Pwd   string `json:"pwd"`  // 提取码（回传给前端）
 	Code  string `json:"code"` // share_code
+	// FidToken 夸克分享文件的访问令牌（share_fid_token）——转存用。
+	// 其他网盘为空。导入时随文件一起入库，播放转存时不必再扫分享树。
+	FidToken string `json:"fid_token,omitempty"`
 }
 
 // 分享链接所能识别的域名
@@ -486,6 +489,9 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 				Name string `json:"name"`
 				Path string `json:"path"`
 				Size int64  `json:"size"`
+				// FidToken 夸克分享令牌（share_fid_token）——前端原样带回，
+				// 仅供夸克 TV 302 播放时转存用，其他网盘为空。
+				FidToken string `json:"fid_token"`
 			} `json:"files"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Files) == 0 {
@@ -525,6 +531,7 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 				ShareID:  req.PwdID,
 				Passcode: req.Passcode,
 				FileID:   f.ID,
+				FidToken: f.FidToken, // 夸克 TV 302 转存用（其他网盘为空）
 				Ext:      ext,
 				Size:     f.Size,
 			})
