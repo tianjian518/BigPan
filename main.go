@@ -541,6 +541,20 @@ func directGuard(store *Store) http.Handler {
 					http.Error(w, "取直链失败: "+err.Error(), http.StatusBadGateway)
 					return
 				}
+				// 百度 + 浏览器 + 用户开启了代取开关 → 本机转发，不回 302。
+				// 见 STRMConfig.BaiduBrowserRelay 的说明（默认关闭，只影响百度）。
+				if wantBrowserRelay(it, r) {
+					ua, ck := *flagUA, ""
+					if pt := getPlayTarget(it.ID); pt != nil {
+						if pt.ua != "" {
+							ua = pt.ua
+						}
+						ck = pt.cookie
+					}
+					log.Printf("  [直链] %s → 浏览器代取（数据经过本机）", it.FileName())
+					proxyBaiduRelay(w, r, u, ua, ck)
+					return
+				}
 				log.Printf("  [直链] %s → 302 跳转（数据不经过本机）", it.FileName())
 				// 关键：禁止客户端缓存 302 目标。直链常在几秒~几分钟内过期，
 				// 缓存后第二次播放会拿到死链，表现为「视频不存在」。
@@ -762,6 +776,122 @@ func proxyPlain(w http.ResponseWriter, r *http.Request, target, ua string, hc *h
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// ---------------------------------------------------------------------------
+// 百度「浏览器播放」代取（默认关闭，见 STRMConfig.BaiduBrowserRelay）
+//
+// 背景：百度 dlink 按 UA 分流，浏览器 UA 请求 appall01 会被拒，纯 302 在
+// 浏览器里必然播不了。开关打开后，仅当「百度 + 浏览器 + GET/HEAD」时，
+// 改由本机带 netdisk UA 代取并转发。其余情况一律保持原来的 302。
+//
+// ⚠️ 不加这个开关时，本文件其余逻辑与改动前完全一致。
+// ---------------------------------------------------------------------------
+
+// wantBrowserRelay 判断本次请求是否要走百度代取。
+// 三个条件缺一不可：配置开启、条目属于百度、请求方是浏览器。
+func wantBrowserRelay(it *Item, r *http.Request) bool {
+	if it == nil || !strmCfg.BaiduBrowserRelay {
+		return false
+	}
+	if !strings.EqualFold(it.Provider, "baidu") {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return isBrowserUA(r.Header.Get("User-Agent"))
+}
+
+// isBrowserUA 判断 UA 是否来自浏览器。
+//
+// 必须排除媒体服务器（飞牛影视 / Emby / Jellyfin / Kodi / Infuse 等）：
+// 它们能自己处理 302，让它们走代取只会白白吃掉本机带宽。
+func isBrowserUA(ua string) bool {
+	if ua == "" {
+		return false
+	}
+	low := strings.ToLower(ua)
+	// 先排除：UA 里常带 Mozilla 字样的非浏览器客户端
+	for _, kw := range []string{
+		"kodi", "infuse", "vlc", "emby", "jellyfin", "plex",
+		"okhttp", "dalvik", "python-", "curl/", "wget", "go-http-client",
+		"libmpv", "exoplayer", "ffmpeg",
+	} {
+		if strings.Contains(low, kw) {
+			return false
+		}
+	}
+	if !strings.Contains(ua, "Mozilla") {
+		return false
+	}
+	for _, kw := range []string{"Chrome/", "Firefox/", "Safari/", "Edg/", "AppleWebKit"} {
+		if strings.Contains(ua, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// proxyBaiduRelay 带网盘 UA 代取百度直链并把字节转发给调用方。
+// 透传 Range / 206 / Content-Range，保证拖动进度条和断点续传正常。
+func proxyBaiduRelay(w http.ResponseWriter, r *http.Request, target, ua, cookie string) {
+	req, err := http.NewRequest(r.Method, target, nil)
+	if err != nil {
+		http.Error(w, "代取失败: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if rg := r.Header.Get("Range"); rg != "" {
+		req.Header.Set("Range", rg)
+	}
+	if ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	req.Header.Set("Accept", "*/*")
+	// 百度 dlink 要求带 Referer，缺了也会被拒。
+	req.Header.Set("Referer", "https://pan.baidu.com/")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "代取失败: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		log.Printf("  [代取] 上游返回 %d", resp.StatusCode)
+		http.Error(w, fmt.Sprintf("上游返回 %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	// 只透传对播放有意义的头，避免把上游的 CORS / Set-Cookie 一起漏出去
+	// （CORS 头在 directGuard 开头已按本项目策略设好）。
+	for _, k := range []string{
+		"Content-Length", "Content-Range", "Accept-Ranges",
+		"Last-Modified", "ETag",
+	} {
+		if v := resp.Header.Get(k); v != "" {
+			w.Header().Set(k, v)
+		}
+	}
+	// 百度整片常回 application/octet-stream，浏览器会因 MIME 非视频而黑屏，
+	// 所以按真实扩展名纠正 Content-Type（而不是照抄上游）。
+	ct := videoContentType(filepath.Ext(target))
+	if ct == "" {
+		ct = resp.Header.Get("Content-Type")
+	}
+	if ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+
+	w.WriteHeader(resp.StatusCode)
+	if r.Method == http.MethodHead {
+		return
+	}
 	_, _ = io.Copy(w, resp.Body)
 }
 

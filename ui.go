@@ -420,6 +420,12 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
             </select>
           </td></tr>
           <tr><td style="color:var(--mut)">视频后缀</td><td><input id="strmExts" placeholder=".mp4,.mkv（留空 = 全部常见格式）" style="width:100%"></td></tr>
+          <tr><td style="color:var(--mut);vertical-align:top">百度浏览器代取</td><td>
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="baiduRelay"> 开启</label><br>
+            <small style="color:var(--mut)">默认<b>关闭</b>，保持纯 302、数据不过本机。<br>
+            开启后：在<b>浏览器</b>里直接点开百度分享的视频也能播放，但<b>这部分流量要经过本机</b>（服务器流量/带宽有上限的要留意）。<br>
+            飞牛影视 / Emby / Kodi 等媒体服务器<b>不受此开关影响</b>，始终走 302；其他网盘也不受影响。</small>
+          </td></tr>
         </table>
         <div id="strmStale" class="banner" style="display:none">
           <b>⚠️ 对外地址变了，存量 .strm 已失效</b><br>
@@ -1172,6 +1178,7 @@ function loadStrm(){
     $('strmBase').value=STRMC.base_url||'';
     $('strmLayout').value=STRMC.layout||'full';
     $('strmExts').value=(STRMC.exts||[]).join(',');
+    $('baiduRelay').checked=!!STRMC.baidu_browser_relay;
     var hint='当前生效：'+(d.dir||'—')+' · '+(d.base_url||'未配置地址');
     var ba=d.built_at||'';
     if(ba&&ba.indexOf('0001-')!==0)hint+=' · 上次重建 '+fmtTime(ba);
@@ -1202,7 +1209,8 @@ function saveStrm(){
     exts:$('strmExts').value.split(',').map(function(s){return s.trim()}).filter(Boolean),
     providers:(STRMC&&STRMC.providers)||[],
     categories:(STRMC&&STRMC.categories)||[],
-    auto_rebuild:STRMC?!!STRMC.auto_rebuild:true
+    auto_rebuild:STRMC?!!STRMC.auto_rebuild:true,
+    baidu_browser_relay:$('baiduRelay').checked
   };
   fetch('/api/strm/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
   .then(function(r){return r.json()}).then(function(d){

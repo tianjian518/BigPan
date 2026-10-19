@@ -67,6 +67,22 @@ type STRMConfig struct {
 	Exts []string `json:"exts"`
 	// AutoRebuild 追更新增剧集后自动重建
 	AutoRebuild bool `json:"auto_rebuild"`
+	// BaiduBrowserRelay 百度分享「浏览器播放」是否由服务端代取。
+	//
+	// 【为什么需要】
+	// 百度 dlink 按 UA 分流：只有 netdisk 系 UA 能过 appall01，浏览器 UA 会 403。
+	// 所以 /direct 的纯 302 在浏览器里点开必然失败。
+	//
+	// 【代价】
+	// 开启后浏览器播放的字节要经过本机转发（流量、带宽都算本机的）；
+	// 飞牛影视 / Emby / Kodi 等媒体服务器不是浏览器，**仍走 302，不受影响**。
+	//
+	// 【默认关闭的理由】
+	// 本项目核心卖点就是「数据不过本机」。默认打开会让新用户误以为
+	// 「过流量」是正常状态，把服务器流量跑光。所以必须由用户主动开。
+	//
+	// 只对百度生效；139 / 夸克 / 115 行为不变。
+	BaiduBrowserRelay bool `json:"baidu_browser_relay"`
 }
 
 var strmCfg = STRMConfig{
