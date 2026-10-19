@@ -1237,9 +1237,10 @@ var PV_LIST=[
 // 两个凭证分别以 provider="quark_tv" / "quark" 存入账号库，互不干扰。
 var PV_CONN={
   quark:{name:'夸克网盘',methods:['scan','cookie'],importApi:'/api/quark/import',
+    needBoth:true,
     scanStart:'/api/login/quark/start',scanPoll:'/api/login/quark/poll',
-    scanSteps:['打开手机上的夸克 TV / 当贝 / 电视版 App（或夸克 App 的 TV 登录入口）','用 App 里的「扫码登录」扫下面的码','手机上点<b>「确认登录」</b>，本页面自动变成「登录成功」'],
-    scanNote:'两种登录各自独立、建议都连上：<b>扫码</b>走夸克TV，播放时给 302 直链（不耗本机流量）；<b>Cookie</b>走夸克普通版，分享转存才用它。',
+    scanSteps:['打开手机上的夸克 TV / 当贝 / 电视版 App（或夸克 App 的 TV 登录入口）','用 App 里的「扫码登录」扫下面的码','手机上点<b>「确认登录」</b>，本页面会提示还差 Cookie，接着做就行'],
+    scanNote:'夸克 302 直连需要<b>两样凭证</b>：<b>扫码</b>走夸克TV，播放时给 302 直链（不耗本机流量）；<b>Cookie</b>走夸克普通版，分享转存才用它。在这个弹窗里依次做完——做完一样不会关掉，接着做另一样，两样都齐才提示连接成功。',
     cookiePh:'夸克 Cookie 整串',
     steps:['电脑浏览器打开 <code>pan.quark.cn</code>，登录你的夸克','按键盘 <b>F12</b> → 点上面「网络 / Network」','左边随便点一个请求 → 请求头里找到 <b>Cookie</b> → 整串复制','粘到下面框里，点「导入连接」']},
   '115':{name:'115网盘',methods:['scan','cookie'],importApi:'/api/accounts/import',
@@ -1261,6 +1262,7 @@ function loadAccts(){
   fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
     var arr=d.accounts||d||[];if(!Array.isArray(arr))arr=[];
     var map={};for(var i=0;i<arr.length;i++)map[arr[i].provider]=arr[i];
+    ACCTS_MAP=map; // 缓存：连接弹窗要据此判断「另一样凭证连了没」
     var t='<tr><th style="width:110px">网盘</th><th>状态</th><th style="width:100px;text-align:right">操作</th></tr>';
     for(var j=0;j<PV_LIST.length;j++){
       var p=PV_LIST[j],a=map[p.pv];
@@ -1299,12 +1301,16 @@ function loadAccts(){
     $('accts').innerHTML=t;
   }).catch(function(){$('accts').innerHTML='<tr><td colspan="3" style="color:var(--mut)">读取失败，刷新页面试试</td></tr>'});
 }
-var CONN_PV=null,CONN_SCAN_TIMER=null,CONN_SCAN_CD=null;
+var CONN_PV=null,CONN_SCAN_TIMER=null,CONN_SCAN_CD=null,CONN_DONE={scan:false,cookie:false};
+var ACCTS_MAP={}; // 最近一次 /api/accounts 的 provider→账号 映射
 function openConn(pv){
   var c=PV_CONN[pv];if(!c)return;
   CONN_PV=pv;
+  // 从已装账号恢复进度（重开弹窗时勾不能丢）
+  CONN_DONE={scan:!!ACCTS_MAP['quark_tv'],cookie:!!ACCTS_MAP['quark']};
   $('connTitle').innerHTML='连接 '+esc(c.name);
   var h='';
+  if(c.needBoth)h+='<div id="connBanner" style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px;background:rgba(32,128,240,.04)"></div>';
   if(c.methods.length>1){
     h+='<div class="row" style="margin-bottom:14px">';
     h+='<button id="connTabScan" style="flex:1" onclick="renderConn(\'scan\')">📱 扫码登录（推荐）</button>';
@@ -1314,15 +1320,53 @@ function openConn(pv){
   h+='<div id="connPane"></div>';
   $('connBody').innerHTML=h;
   $('connModal').style.display='flex';requestAnimationFrame(function(){$('connModal').classList.add('show')});
+  if(c.needBoth)updateConnBanner();
   renderConn(c.methods[0]);
+}
+// 夸克专属：进度横幅——两样凭证各自的状态 + 还差什么的指引。
+function updateConnBanner(){
+  var b=$('connBanner');if(!b)return;
+  var s=CONN_DONE.scan,c=CONN_DONE.cookie;
+  var okc='var(--ok)',mut='var(--mut)';
+  var prog='<div style="font-size:13px;margin-bottom:8px">连接进度：<b style="color:'+(s?okc:mut)+'">'+(s?'✓ 扫码登录':'① 扫码登录')+'</b> ＋ <b style="color:'+(c?okc:mut)+'">'+(c?'✓ Cookie':'② Cookie')+'</b></div>';
+  var msg;
+  if(s&&c)msg='<div style="color:var(--ok);font-weight:600">🎉 两样都连好了，夸克 302 直链播放已解锁！</div>';
+  else if(s)msg='<div class="sub" style="color:var(--warn)">还差 <b>Cookie</b>（分享转存用它）——已帮你切到「粘贴 Cookie」，贴完点「导入连接」。</div>';
+  else if(c)msg='<div class="sub" style="color:var(--warn)">还差 <b>扫码登录</b>（302 直链播放用它）——已帮你切到「扫码登录」，用手机夸克扫一下。</div>';
+  else msg='<div class="sub">夸克 302 直连需要<b>两样凭证</b>：扫码登录取直链、Cookie 管转存。在这个弹窗里依次做完，做完一样不会关掉，接着做另一样。</div>';
+  b.innerHTML=prog+msg;
+}
+// tab 标签带完成勾
+function markConnTabs(){
+  if(!$('connTabScan'))return;
+  $('connTabScan').innerHTML='📱 扫码登录'+(CONN_DONE.scan?' ✓':'');
+  $('connTabCookie').innerHTML='📋 粘贴 Cookie'+(CONN_DONE.cookie?' ✓':'');
+}
+// 某一样凭证完成：夸克（needBoth）不关弹窗，切到还差的那样接着做；
+// 两样都齐（或其他网盘单选）才收尾。
+function connDone(m){
+  var c=PV_CONN[CONN_PV];if(!c)return;
+  CONN_DONE[m]=true;
+  if(m==='scan')ACCTS_MAP['quark_tv']={provider:'quark_tv'};
+  else ACCTS_MAP['quark']={provider:'quark'};
+  updateConnBanner();
+  if(c.needBoth&&!(CONN_DONE.scan&&CONN_DONE.cookie)){
+    markConnTabs();
+    renderConn(m==='scan'?'cookie':'scan'); // 自动切到还差的那样
+    return;
+  }
+  if(c.needBoth){setTimeout(function(){closeConn();toast('连接成功，立即生效');loadSet()},1200);return}
+  closeConn();toast('连接成功，立即生效');loadSet();
 }
 function renderConn(m){
   var c=PV_CONN[CONN_PV];if(!c)return;
   if(CONN_SCAN_TIMER){clearInterval(CONN_SCAN_TIMER);CONN_SCAN_TIMER=null}
   if(CONN_SCAN_CD){clearInterval(CONN_SCAN_CD);CONN_SCAN_CD=null}
   if($('connTabScan')){$('connTabScan').className=m==='scan'?'ston':'gray';$('connTabCookie').className=m==='cookie'?'ston':'gray'}
+  markConnTabs();
   var h='';
   if(m==='cookie'){
+    if(c.needBoth&&CONN_DONE.cookie)h+='<div style="color:var(--ok);font-size:13.5px;font-weight:600;margin-bottom:8px">✓ Cookie 已导入（换号直接贴新的覆盖）</div>';
     h+='<div style="font-size:13.5px;font-weight:600;margin-bottom:8px">怎么弄（一分钟搞定）：</div>';
     h+='<ol style="margin:0 0 14px;padding-left:20px;line-height:2;color:var(--txt);font-size:13.5px">';
     for(var i=0;i<c.steps.length;i++)h+='<li>'+c.steps[i]+'</li>';
@@ -1335,14 +1379,19 @@ function renderConn(m){
     h+='<ol style="margin:0 0 14px;padding-left:20px;line-height:2;color:var(--txt);font-size:13.5px">';
     for(var i=0;i<c.scanSteps.length;i++)h+='<li>'+c.scanSteps[i]+'</li>';
     h+='</ol>';
-    h+='<div style="text-align:center"><img id="connQRImg" src="" style="width:200px;height:200px;border-radius:8px;background:#fff;border:1px solid var(--line)"></div>';
-    h+='<div id="connQRMsg" style="margin-top:10px;text-align:center;font-size:13.5px;color:var(--mut)">正在获取二维码…</div>';
-    h+='<div id="connQRTTL" style="margin-top:4px;text-align:center;font-size:12.5px;color:var(--mut)"></div>';
+    if(c.needBoth&&CONN_DONE.scan){
+      // 已扫过：不重复起会话，给个完成态 + 换号重扫入口
+      h+='<div style="text-align:center;color:var(--ok);font-size:14px;font-weight:600;padding:18px 0">✓ 扫码登录已完成<br><span style="font-size:13px;font-weight:400">要换号？点下面重新扫</span><br><button class="mini" style="margin-top:10px" onclick="CONN_DONE.scan=false;markConnTabs();updateConnBanner();renderConn(\'scan\')">重新扫码</button></div>';
+    }else{
+      h+='<div style="text-align:center"><img id="connQRImg" src="" style="width:200px;height:200px;border-radius:8px;background:#fff;border:1px solid var(--line)"></div>';
+      h+='<div id="connQRMsg" style="margin-top:10px;text-align:center;font-size:13.5px;color:var(--mut)">正在获取二维码…</div>';
+      h+='<div id="connQRTTL" style="margin-top:4px;text-align:center;font-size:12.5px;color:var(--mut)"></div>';
+    }
     h+='<div class="sub" style="margin-top:12px">'+(c.scanNote||'扫码没反应或反复失败？切到「粘贴 Cookie」方式，基本不会失败。')+'</div>';
   }
   $('connPane').innerHTML=h;
   if(m==='cookie'){var el=$('connCk');if(el)el.focus()}
-  if(m==='scan')connScan();
+  if(m==='scan'&&!(c.needBoth&&CONN_DONE.scan))connScan();
 }
 function connScan(){
   var c=PV_CONN[CONN_PV];
@@ -1365,7 +1414,7 @@ function connScan(){
         if(p.done){
           clearInterval(CONN_SCAN_TIMER);if(CONN_SCAN_CD)clearInterval(CONN_SCAN_CD);
           if(p.error){$('connQRMsg').textContent=p.error;toast(p.error)}
-          else{closeConn();toast('连接成功，立即生效');loadSet()}
+          else{connDone('scan')}
         }
       }).catch(function(){});
     },2000);
@@ -1377,7 +1426,7 @@ function connImport(){
   var body=CONN_PV==='quark'?{cookie:ck}:{provider:CONN_PV,cookie:ck};
   fetch(c.importApi,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
   .then(function(r){return r.json()}).then(function(d){
-    if(d.ok){toast('连接成功，立即生效');$('connCk').value='';closeConn();loadSet()}
+    if(d.ok){$('connCk').value='';connDone('cookie')}
     else toast(d.error||'导入失败');
   }).catch(function(){toast('网络错误，重试看看')});
 }
