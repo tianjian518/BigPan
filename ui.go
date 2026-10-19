@@ -376,34 +376,9 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     </div>
     <div id="pg-set" style="display:none">
       <div class="pagehd"><h2>设置</h2><span class="sub">网盘取流凭证与播放器接入地址</span></div>
-      <div class="card"><b style="font-size:14px">网盘账号（取流凭证）<span class="cd">解析分享不需要账号；播放取流才需要，填一次就行</span></b>
-        <table id="accts" style="margin-top:8px"></table>
-        <div class="sub" style="margin:8px 0 0">每个网盘只保存当前使用的账号。换号：点「退出/换号」→ 直接导入新账号即可（百度可扫码）。旧凭证的播放直链会自动作废，百度的旧临时转存文件会在后台清理，不需要重启。</div>
-        <div class="row" style="margin-top:12px">
-          <select id="impPv" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe">
-            <option value="quark">夸克</option><option value="115">115</option><option value="tianyi">天翼</option><option value="mobile139">移动</option><option value="baidu">百度</option>
-          </select>
-          <input type="text" id="impCk" placeholder="夸克/115 粘 Cookie；移动云盘粘 Basic 后 token；百度粘 BDUSS" style="flex:1;min-width:200px">
-          <button onclick="impAcc()">导入凭证</button>
-          <button class="gray" onclick="baiduScan()">百度扫码</button>
-        </div>
-        <div id="baiduQRBox" style="display:none;margin-top:12px;padding:14px;border:1px dashed var(--pri-line);border-radius:9px">
-          <div style="font-size:13.5px;line-height:1.75;margin-bottom:10px">
-            <b>扫码登录 · 照着做：</b><br>
-            ① 打开<b>手机百度 App</b>（或百度网盘 App）的「扫一扫」，扫下面的码<br>
-            ② 手机上弹出<b>【确认登录】</b>，点它<br>
-            ③ 本页自动变成「登录成功」
-          </div>
-          <img id="baiduQRImg" src="" style="width:200px;height:200px;border-radius:8px;background:#fff">
-          <div id="baiduQRMsg" style="margin-top:8px;font-size:13px;color:var(--mut)">等待扫码…</div>
-          <div id="baiduTTL" style="margin-top:4px;font-size:12.5px;color:var(--mut)"></div>
-          <button class="gray" style="margin-top:8px" onclick="baiduScan()">重新获取二维码</button>
-          <div style="margin-top:10px;font-size:12.5px;color:var(--mut);line-height:1.7">
-            扫码一直没反应？别折腾扫码，直接用下面「导入凭证」，基本不会失败：<br>
-            电脑浏览器登录 <code>pan.baidu.com</code> → 按 F12 → 网络(Network) → 随便点一个请求 → 复制请求头里的<b>整串 Cookie</b> → 回来选「百度」粘进输入框 → 点「导入凭证」。
-          </div>
-        </div>
-        <div class="sub" style="margin:8px 0 0">浏览器登录网盘网页版 → F12 → 网络 → 随便一个请求 → 复制请求头里整串 Cookie 粘进来。解析分享不需要凭证，播放取流需要。</div>
+      <div class="card"><b style="font-size:14px">网盘账号（取流凭证）<span class="cd">解析分享不需要账号；播放取流才需要，连一次就行</span></b>
+        <div class="sub" style="margin:8px 0 0">下面列着所有能连的网盘，连没连都标着呢。要连哪个就点它后面的「<b>连接</b>」，照着弹窗里的步骤做，一分钟连一个。换号：点「退出/换号」再连新的——旧凭证自动作废，百度的旧临时文件后台清理，不用重启。</div>
+        <table id="accts" style="margin-top:10px"></table>
       </div>
       <div class="card">
         <b style="font-size:14px">播放器接入<span class="cd">把这两个地址填进对应的客户端，文件就开始流转了</span></b>
@@ -477,6 +452,12 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <button class="gray" onclick="closeCatModal()">取消</button>
       <button id="cmYes" onclick="doChangeCat()">确定</button>
     </div>
+  </div>
+</div>
+<div class="modal" id="connModal" onclick="if(event.target===this)closeConn()">
+  <div class="mbox" style="max-width:540px">
+    <div class="mtitle" id="connTitle"></div>
+    <div class="mbody" id="connBody" style="white-space:normal;text-align:left"></div>
   </div>
 </div>
 <div class="player" id="player" onclick="if(event.target===this)closePlayer()">
@@ -1160,18 +1141,7 @@ function loadSet(){
     $('davUrl').textContent=SELF+'/dav';
     $('directUrl').textContent=SELF+'/direct';
   });
-  $('accts').innerHTML='<tr><td colspan="4" class="loading"><span class="spin"></span>加载中…</td></tr>';
-  fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
-    var arr=d.accounts||d||[];if(!Array.isArray(arr))arr=[];
-    var t='<tr><th style="width:110px">网盘</th><th>说明</th><th style="width:118px;text-align:right">导入时间</th><th style="width:90px"></th></tr>';
-    if(!arr.length)t+='<tr><td colspan=4><div class="empty" style="padding:30px 10px"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div><b>还没有导入取流凭证</b>解析分享不需要；播放取流需要</div></td></tr>';
-    for(var i=0;i<arr.length;i++){
-      var a=arr[i];
-      t+='<tr><td><span class="tag '+(PVCLS[a.provider]||'')+'">'+esc(PVCN[a.provider]||a.provider)+'</span></td><td>'+esc(a.label||'')+'</td><td class="tm">'+fmtTime(a.login_at)+'</td>'+
-        '<td><button class="mini danger" onclick="delAcc(\''+esc(a.provider)+'\')">退出/换号</button></td></tr>';
-    }
-    $('accts').innerHTML=t;
-  }).catch(function(){$('accts').innerHTML='<tr><td colspan="4" style="color:var(--mut)">读取失败</td></tr>'});
+  loadAccts();
   loadStrm();
 }
 // ---- STRM 导出配置 ----
@@ -1224,42 +1194,141 @@ function saveStrm(){
     else toast(d.error||'保存失败');
   }).catch(function(){toast('保存失败')});
 }
-function impAcc(){
-  var p=$('impPv').value, ck=$('impCk').value.trim();
-  if(!ck){toast('先粘贴 Cookie');return}
-  fetch('/api/accounts/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:p,cookie:ck})})
-  .then(function(r){return r.json()}).then(function(d){
-    if(d.ok){toast('凭证导入成功，立即生效');$('impCk').value='';loadSet();}
-    else toast(d.error||'导入失败');
-  });
+// ---- 网盘连接中心：全部网盘列表 + 引导式连接弹窗 ----
+var PV_LIST=[
+  {pv:'quark',name:'夸克网盘'},
+  {pv:'115',name:'115网盘'},
+  {pv:'baidu',name:'百度网盘'},
+  {pv:'mobile139',name:'移动云盘'}
+];
+// 连接方式配置。methods：scan=扫码 / cookie=粘贴。
+// 夸克一期只开放 Cookie；二期接夸克TV扫码时，在 quark.methods 里加 'scan'、
+// 填上 scanStart/scanPoll/scanSteps，UI 自动出方式切换，别处不用动。
+var PV_CONN={
+  quark:{name:'夸克网盘',methods:['cookie'],importApi:'/api/quark/import',
+    cookiePh:'夸克 Cookie 整串',
+    steps:['电脑浏览器打开 <code>pan.quark.cn</code>，登录你的夸克','按键盘 <b>F12</b> → 点上面「网络 / Network」','左边随便点一个请求 → 请求头里找到 <b>Cookie</b> → 整串复制','粘到下面框里，点「导入连接」']},
+  '115':{name:'115网盘',methods:['scan','cookie'],importApi:'/api/accounts/import',
+    scanStart:'/api/login/115/start',scanPoll:'/api/login/115/poll',
+    scanSteps:['打开手机 <b>115 App</b> → 右上角「+」→「扫一扫」','扫下面的码 → 手机上点<b>「确认登录」</b>','本页面自动变成「登录成功」'],
+    cookiePh:'115 Cookie 整串',
+    steps:['电脑浏览器打开 <code>115.com</code>，登录','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 复制请求头里的 <b>整串 Cookie</b>','粘到下面框里，点「导入连接」']},
+  baidu:{name:'百度网盘',methods:['scan','cookie'],importApi:'/api/accounts/import',
+    scanStart:'/api/login/baidu/start',scanPoll:'/api/login/baidu/poll',
+    scanSteps:['打开手机<b>百度 App</b>（或百度网盘 App）→「扫一扫」','扫下面的码 → 手机上点<b>「确认登录」</b>','本页面自动变成「登录成功」'],
+    cookiePh:'BDUSS，或整串 Cookie',
+    steps:['电脑浏览器打开 <code>pan.baidu.com</code>，登录','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 复制请求头里的 <b>整串 Cookie</b>（只有 BDUSS 也行）','粘到下面框里，点「导入连接」']},
+  mobile139:{name:'移动云盘',methods:['cookie'],importApi:'/api/accounts/import',
+    cookiePh:'Authorization 里 Basic 后面那串',
+    steps:['电脑浏览器打开 <code>yun.139.com</code>，登录移动云盘','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 请求头里找 <b>Authorization</b>','复制 <code>Basic</code> 后面那一长串（整串粘也行）→ 点「导入连接」']}
+};
+// 渲染全部网盘列表：连了的亮状态+退出按钮，没连的出「连接」按钮
+function loadAccts(){
+  fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
+    var arr=d.accounts||d||[];if(!Array.isArray(arr))arr=[];
+    var map={};for(var i=0;i<arr.length;i++)map[arr[i].provider]=arr[i];
+    var t='<tr><th style="width:110px">网盘</th><th>状态</th><th style="width:100px;text-align:right">操作</th></tr>';
+    for(var j=0;j<PV_LIST.length;j++){
+      var p=PV_LIST[j],a=map[p.pv];
+      if(a){
+        t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
+          '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">'+esc(a.label||'')+' · '+fmtTime(a.login_at)+'</span></td>'+
+          '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
+      }else{
+        t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
+          '<td style="color:var(--mut)">未连接<span class="cd" style="margin-left:6px">播放取流前要连上</span></td>'+
+          '<td style="text-align:right"><button class="mini" onclick="openConn(\''+p.pv+'\')">连接</button></td></tr>';
+      }
+    }
+    $('accts').innerHTML=t;
+  }).catch(function(){$('accts').innerHTML='<tr><td colspan="3" style="color:var(--mut)">读取失败，刷新页面试试</td></tr>'});
 }
-var baiduTimer=null,baiduCd=null;
-function baiduScan(){
-  fetch('/api/login/baidu/start',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-    if(!d.ok){toast(d.error||'获取二维码失败');return;}
-    $('baiduQRImg').src=d.qr;
-    $('baiduQRBox').style.display='block';
-    $('baiduQRMsg').textContent='等待扫码…';
+var CONN_PV=null,CONN_SCAN_TIMER=null,CONN_SCAN_CD=null;
+function openConn(pv){
+  var c=PV_CONN[pv];if(!c)return;
+  CONN_PV=pv;
+  $('connTitle').innerHTML='连接 '+esc(c.name);
+  var h='';
+  if(c.methods.length>1){
+    h+='<div class="row" style="margin-bottom:14px">';
+    h+='<button id="connTabScan" style="flex:1" onclick="renderConn(\'scan\')">📱 扫码登录（推荐）</button>';
+    h+='<button id="connTabCookie" class="gray" style="flex:1" onclick="renderConn(\'cookie\')">📋 粘贴 Cookie</button>';
+    h+='</div>';
+  }
+  h+='<div id="connPane"></div>';
+  $('connBody').innerHTML=h;
+  $('connModal').style.display='flex';requestAnimationFrame(function(){$('connModal').classList.add('show')});
+  renderConn(c.methods[0]);
+}
+function renderConn(m){
+  var c=PV_CONN[CONN_PV];if(!c)return;
+  if(CONN_SCAN_TIMER){clearInterval(CONN_SCAN_TIMER);CONN_SCAN_TIMER=null}
+  if(CONN_SCAN_CD){clearInterval(CONN_SCAN_CD);CONN_SCAN_CD=null}
+  if($('connTabScan')){$('connTabScan').className=m==='scan'?'ston':'gray';$('connTabCookie').className=m==='cookie'?'ston':'gray'}
+  var h='';
+  if(m==='cookie'){
+    h+='<div style="font-size:13.5px;font-weight:600;margin-bottom:8px">怎么弄（一分钟搞定）：</div>';
+    h+='<ol style="margin:0 0 14px;padding-left:20px;line-height:2;color:var(--txt);font-size:13.5px">';
+    for(var i=0;i<c.steps.length;i++)h+='<li>'+c.steps[i]+'</li>';
+    h+='</ol>';
+    h+='<div class="row"><input type="text" id="connCk" placeholder="'+esc(c.cookiePh)+'" style="flex:1;min-width:200px">';
+    h+='<button onclick="connImport()">导入连接</button></div>';
+    h+='<div class="sub" style="margin-top:10px">解析分享不需要凭证，播放取流才要。导一次就行，换号直接再导。</div>';
+  }else{
+    h+='<div style="font-size:13.5px;font-weight:600;margin-bottom:8px">扫码登录 · 照着做：</div>';
+    h+='<ol style="margin:0 0 14px;padding-left:20px;line-height:2;color:var(--txt);font-size:13.5px">';
+    for(var i=0;i<c.scanSteps.length;i++)h+='<li>'+c.scanSteps[i]+'</li>';
+    h+='</ol>';
+    h+='<div style="text-align:center"><img id="connQRImg" src="" style="width:200px;height:200px;border-radius:8px;background:#fff;border:1px solid var(--line)"></div>';
+    h+='<div id="connQRMsg" style="margin-top:10px;text-align:center;font-size:13.5px;color:var(--mut)">正在获取二维码…</div>';
+    h+='<div id="connQRTTL" style="margin-top:4px;text-align:center;font-size:12.5px;color:var(--mut)"></div>';
+    h+='<div class="sub" style="margin-top:12px">扫码没反应或反复失败？切到「粘贴 Cookie」方式，基本不会失败。</div>';
+  }
+  $('connPane').innerHTML=h;
+  if(m==='cookie'){var el=$('connCk');if(el)el.focus()}
+  if(m==='scan')connScan();
+}
+function connScan(){
+  var c=PV_CONN[CONN_PV];
+  fetch(c.scanStart,{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    if(!d.ok){$('connQRMsg').textContent=d.error||'获取二维码失败';return}
+    $('connQRImg').src=d.qr;
+    $('connQRMsg').textContent='等待扫码…';
     var expireAt=Date.now()+(d.ttl||600)*1000;
-    if(baiduCd)clearInterval(baiduCd);
-    baiduCd=setInterval(function(){
+    if(CONN_SCAN_CD)clearInterval(CONN_SCAN_CD);
+    CONN_SCAN_CD=setInterval(function(){
       var left=Math.max(0,Math.round((expireAt-Date.now())/1000));
-      $('baiduTTL').textContent=left>0?('二维码 '+Math.floor(left/60)+' 分 '+(left%60)+' 秒后过期'):'二维码已过期，请点「重新获取二维码」';
-      if(left<=0)clearInterval(baiduCd);
+      $('connQRTTL').textContent=left>0?('二维码 '+Math.floor(left/60)+' 分 '+(left%60)+' 秒后过期'):'二维码已过期，关掉弹窗重点「连接」即可';
+      if(left<=0)clearInterval(CONN_SCAN_CD);
     },1000);
-    if(baiduTimer)clearInterval(baiduTimer);
-    baiduTimer=setInterval(function(){
-      fetch('/api/login/baidu/poll?sid='+d.sid).then(function(r){return r.json()}).then(function(p){
-        if(!p.ok){clearInterval(baiduTimer);$('baiduQRMsg').textContent=p.error||'失败';return;}
-        $('baiduQRMsg').textContent=p.message||'';
+    if(CONN_SCAN_TIMER)clearInterval(CONN_SCAN_TIMER);
+    CONN_SCAN_TIMER=setInterval(function(){
+      fetch(c.scanPoll+'?sid='+d.sid).then(function(r){return r.json()}).then(function(p){
+        if(!p.ok){clearInterval(CONN_SCAN_TIMER);$('connQRMsg').textContent=p.error||'失败';return}
+        if(p.message)$('connQRMsg').textContent=p.message;
         if(p.done){
-          clearInterval(baiduTimer);if(baiduCd)clearInterval(baiduCd);
-          if(p.error){$('baiduQRMsg').textContent=p.error;toast(p.error);}
-          else{$('baiduQRBox').style.display='none';toast('百度登录成功');loadSet();}
+          clearInterval(CONN_SCAN_TIMER);if(CONN_SCAN_CD)clearInterval(CONN_SCAN_CD);
+          if(p.error){$('connQRMsg').textContent=p.error;toast(p.error)}
+          else{closeConn();toast('连接成功，立即生效');loadSet()}
         }
-      });
+      }).catch(function(){});
     },2000);
-  });
+  }).catch(function(){$('connQRMsg').textContent='网络错误，重试看看'});
+}
+function connImport(){
+  var c=PV_CONN[CONN_PV],ck=$('connCk').value.trim();
+  if(!ck){toast('先粘贴凭证再导入');return}
+  var body=CONN_PV==='quark'?{cookie:ck}:{provider:CONN_PV,cookie:ck};
+  fetch(c.importApi,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.ok){toast('连接成功，立即生效');$('connCk').value='';closeConn();loadSet()}
+    else toast(d.error||'导入失败');
+  }).catch(function(){toast('网络错误，重试看看')});
+}
+function closeConn(){
+  if(CONN_SCAN_TIMER){clearInterval(CONN_SCAN_TIMER);CONN_SCAN_TIMER=null}
+  if(CONN_SCAN_CD){clearInterval(CONN_SCAN_CD);CONN_SCAN_CD=null}
+  var m=$('connModal');m.classList.remove('show');setTimeout(function(){m.style.display='none'},200);
 }
 function delAcc(p){
   openModal('退出 / 换号','退出后该网盘会立即停止取流（正在播放的会中断）。\n\n随后直接导入新账号即可：系统会自动丢弃旧凭证的播放直链，百度的旧临时转存文件也会在后台清理——不需要重启，不需要任何额外操作。','退出',function(){
