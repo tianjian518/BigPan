@@ -614,23 +614,20 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 		// 客户端直连网盘 CDN，数据不经过本机（存量 /play .strm 的兼容路——
 		// 开关关着时生成的 /play 地址，开关打开后照样能播）。
 		//
-		// 清晰度策略（2026-10-20 §23.56 实测定）：TV 原画直链单连接被 CDN
-		// 限速到 ~100KB/s（0.8Mbps），1080p 片源要 5Mbps，差 6 倍必卡——
-		// 爆米花/Filmly 都是单连接拉流，4K 原画卡死、1080p 也卡。转码流
-		// 直链单连接 1-2MB/s，够 1080p 档流畅。默认全部走转码流；用户在
-		// 设置里开「画质优先」才拿原画（仅建议局域网/高带宽）。
+		// 清晰度策略（2026-10-20 §23.56/§23.58/§23.59 实测定）：只走 TV
+		// 转码流。原画直链单连接被 CDN 限速到 ~100KB/s（沙箱+家宽双端
+		// 实锤），302 模式下连接归播放器管，而爆米花/飞牛饿起来只开 1 个
+		// 连接（日志：转码流 1 分钟 12+ 个 vs 原画 6 分钟 1 个）——原画
+		// 302 是死路，画质选项已下架。转码流该 CDN 不限单连接，家宽实测
+		// 多连接叠加 16MB/s。
 		if it != nil && strings.EqualFold(it.Provider, "quark") && quarkTV302Enabled() {
 			var u string
 			var uerr error
 			var pt PlayTarget
-			pt, uerr = quarkTVPlayTargetMode(it, !quarkTVOriginalFirst())
+			pt, uerr = quarkTVPlayTarget(it)
 			u = pt.URL
 			if uerr == nil {
-				mode := "夸克 TV 转码流"
-				if quarkTVOriginalFirst() {
-					mode = "夸克 TV 原画"
-				}
-				log.Printf("  [直链] %s → 302 跳转（%s，数据不经过本机）", it.FileName(), mode)
+				log.Printf("  [直链] %s → 302 跳转（夸克 TV 转码流，数据不经过本机）", it.FileName())
 			}
 			if uerr != nil {
 				if it.IsShare() {

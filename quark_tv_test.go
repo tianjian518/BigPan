@@ -304,11 +304,11 @@ func TestQtvStreamingURLPicksBestResolution(t *testing.T) {
 	}
 }
 
-// TestQtvPickURLWebPrefersStreaming 网页模式取链策略：
-//  1. web=true 且转码流可用 → 转码流（浏览器可解的 H.264 MP4）；
-//  2. web=true 但转码流没有 → 回落原画（万一片源本身就是 MP4/H.264）；
-//  3. web=false（原生播放器）→ 原画，清晰度优先。
-func TestQtvPickURLWebPrefersStreaming(t *testing.T) {
+// TestQtvPickURLAlwaysStreamingFirst 取链策略（2026-10-20 定稿，§23.59：
+// 原画选项下架，一律转码流优先）：
+//  1. 转码流可用 → 转码流（H.264 MP4，各播放器可解，该 CDN 不限单连接）；
+//  2. 转码流没有 → 回落原画（万一片源本身就是 MP4/H.264 或没排上转码）。
+func TestQtvPickURLAlwaysStreamingFirst(t *testing.T) {
 	fileH := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("method") == "streaming" {
@@ -330,7 +330,7 @@ func TestQtvPickURLWebPrefersStreaming(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(fileH))
 		defer srv.Close()
 		pointAPIBase(t, srv.URL)
-		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid", true)
+		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid")
 		if err != nil || u != "https://cdn.example/stream.mp4" {
 			t.Fatalf("网页模式应取转码流，got %q err=%v", u, err)
 		}
@@ -351,13 +351,13 @@ func TestQtvPickURLWebPrefersStreaming(t *testing.T) {
 		}))
 		defer srv.Close()
 		pointAPIBase(t, srv.URL)
-		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid", true)
+		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid")
 		if err != nil || u != "https://cdn.example/origin.mkv" {
 			t.Fatalf("转码流失败应回落原画，got %q err=%v", u, err)
 		}
 	})
 
-	t.Run("原生播放器只取原画", func(t *testing.T) {
+	t.Run("一律先打转码流接口", func(t *testing.T) {
 		var sawStreaming bool
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("method") == "streaming" {
@@ -371,12 +371,12 @@ func TestQtvPickURLWebPrefersStreaming(t *testing.T) {
 		}))
 		defer srv.Close()
 		pointAPIBase(t, srv.URL)
-		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid", false)
+		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid")
 		if err != nil || u != "https://cdn.example/origin.mkv" {
-			t.Fatalf("原生播放器应取原画，got %q err=%v", u, err)
+			t.Fatalf("转码流没有时应回落原画，got %q err=%v", u, err)
 		}
-		if sawStreaming {
-			t.Fatal("原生播放器不应打转码流接口（浪费一次 API 调用）")
+		if !sawStreaming {
+			t.Fatal("一律优先转码流：必须先打 streaming 接口再回落")
 		}
 	})
 }

@@ -27,22 +27,10 @@ type AppSettings struct {
 	//
 	// 默认 false：保持现状零行为变化，要用户主动开。
 	// 切换立即生效（存量 .strm 双向兼容，一个都不用重生成）：
-	//   开 → /play 内部转 302、/direct 正常 302；
+	//   开 → /play 内部转 302、/direct 正常 302；清晰度只走 TV 转码流
+	//        （原画直链单连接限速 ~100KB/s 是死路，画质选项已下架，§23.59）；
 	//   关 → /direct 内部转 /play（中转接手）、/play 走中转。
 	QuarkTV302 bool `json:"quark_tv_302"`
-
-	// QuarkTVOriginal 夸克 TV 302 的画质选项（2026-10-20 新增）：
-	//
-	//	false（默认）= 流畅优先：所有客户端都拿 TV 转码流（H.264 MP4，
-	//	        最高 1440x810）。实测 TV 原画直链单连接被 CDN 限速到
-	//	        ~100KB/s（0.8Mbps），1080p 片源要 5Mbps，差 6 倍必卡；
-	//	        转码流单连接 1-2MB/s，够 1080p 档流畅播放。
-	//	true = 画质优先：拿原画直链（2160p/H.265 原片）。仅建议局域网
-	//	        或高带宽环境用——公网/移动网络下单连接限速会卡。
-	//
-	// 注意：302 免认证直链不带会员身份，CDN 按匿名策略限速，88VIP/SVIP
-	// 在链里用不上（2026-10-20 实测，见备忘录 §23.56）。
-	QuarkTVOriginal bool `json:"quark_tv_original"`
 }
 
 var (
@@ -81,14 +69,6 @@ func quarkTV302Enabled() bool {
 	return appSettings.QuarkTV302
 }
 
-// quarkTVOriginalFirst 画质优先开关：true=原画，false（默认）=转码流。
-// 实测依据：原画直链单连接被限速 ~100KB/s，转码流 1-2MB/s（§23.56）。
-func quarkTVOriginalFirst() bool {
-	appSettingsMu.RLock()
-	defer appSettingsMu.RUnlock()
-	return appSettings.QuarkTVOriginal
-}
-
 // setQuarkTV302 改开关并落盘；返回改动后的值。
 // 播放直链缓存一并清掉：开关切过之后，缓存里旧的取流方式（中转直链 /
 // TV 直链）不能再复用，否则要等 25 分钟 TL 自然过期才切得过来。
@@ -116,21 +96,30 @@ func apiSettings() http.HandlerFunc {
 			appSettingsMu.RUnlock()
 			writeJSON(w, map[string]interface{}{"ok": true, "settings": out})
 		case http.MethodPost:
-			var req AppSettings
+			// 指针字段：只覆盖本次传了的开关，没传的原样不动。
+			// （曾经是全量覆盖：UI 只传 quark_tv_302，将来多一个字段就会
+			// 把没传的悄悄清零——2026-10-20 差点让用户设置神秘失踪。）
+			var req struct {
+				QuarkTV302 *bool `json:"quark_tv_302"`
+			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				writeJSON(w, map[string]interface{}{"ok": false, "error": "请求格式错误"})
 				return
 			}
-			// 目前只有一个开关，全量覆盖即可；以后加字段再改成「非零值才覆盖」。
 			appSettingsMu.Lock()
-			appSettings = req
+			if req.QuarkTV302 != nil {
+				appSettings.QuarkTV302 = *req.QuarkTV302
+			}
 			appSettingsMu.Unlock()
 			if err := saveAppSettings(); err != nil {
 				writeJSON(w, map[string]interface{}{"ok": false, "error": "保存失败: " + err.Error()})
 				return
 			}
 			dropAllPlayTargets() // 切换立即生效，不让旧缓存拖 25 分钟
-			writeJSON(w, map[string]interface{}{"ok": true, "settings": req})
+			appSettingsMu.RLock()
+			out := appSettings
+			appSettingsMu.RUnlock()
+			writeJSON(w, map[string]interface{}{"ok": true, "settings": out})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}

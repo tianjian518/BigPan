@@ -304,16 +304,19 @@ func quarkDeleteOwn(q *Quark, fid string) error {
 
 // quarkTVPlayTarget 开关打开时的夸克取链：转存（或复用）→ TV 免认证直链。
 // 返回的 PlayTarget UA/Cookie 全空——TV 直链不绑会话，客户端直连 CDN 即可。
+//
+// 清晰度策略（2026-10-20 定稿，§23.59）：**只走 TV 转码流**，拿不到才回落原画。
+// 曾经有个「画质优先（原画）」选项，已下架——原画直链单连接被 CDN 限速到
+// ~100KB/s（沙箱 + 用户家宽双端实锤），而 302 模式下连接归播放器管，
+// 爆米花/飞牛饿起来只开 1 个连接（日志实锤：转码流模式 1 分钟开 12+ 个，
+// 原画模式 6 分钟开 1 个），原画 302 是死路，按钮纯属误导。
 func quarkTVPlayTarget(item *Item) (PlayTarget, error) {
-	return quarkTVPlayTargetMode(item, false)
-}
-
-// quarkTVPlayTargetMode 同 quarkTVPlayTarget，web=true 时优先取 TV 转码流
-// （H.264 MP4）：浏览器解不开 MKV/H.265 原画（备忘录 §23.30），而 TV 接口的
-// streaming 转码流恰好是浏览器可解的格式，且同样是免认证 CDN 直链——
-// 302 之后数据照样不经过本机。转码流拿不到时回落原画（万一片源本身就是
-// MP4/H.264，浏览器直接就能播）。
-func quarkTVPlayTargetMode(item *Item, web bool) (PlayTarget, error) {
+	// ⓪ 302 直链缓存：播放器每开一个连接就来要一次链（实测 1 分钟 12+ 次），
+	// 逐个打夸克 TV 接口既没必要也拉高风控面。链本身几分钟内有效，
+	// 缓存 60 秒，API 调用量立刻降到约十分之一。
+	if u, ok := quarkLinkCached(item.ID); ok {
+		return PlayTarget{URL: u, UA: "", Cookie: ""}, nil
+	}
 	// ① TV 扫码凭证（取免认证直链用）
 	qtv := quarkTVClient(globalAccounts)
 	if qtv == nil {
@@ -340,7 +343,7 @@ func quarkTVPlayTargetMode(item *Item, web bool) (PlayTarget, error) {
 	}
 	// ⑤ TV 接口取免认证直链（token 失效自动刷新重试在 qtvFileLink 内处理）
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	u, err := qtvPickURL(ctx, qtv, fid, web)
+	u, err := qtvPickURL(ctx, qtv, fid)
 	cancel()
 	if err != nil {
 		// 自愈：转存文件可能已被 sweeper 清掉（TVFID 失效）→ 丢掉记录重转存一次。
@@ -352,28 +355,69 @@ func quarkTVPlayTargetMode(item *Item, web bool) (PlayTarget, error) {
 			return PlayTarget{}, err2
 		}
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-		u, err = qtvPickURL(ctx2, qtv, fid2, web)
+		u, err = qtvPickURL(ctx2, qtv, fid2)
 		cancel2()
 		if err != nil {
 			return PlayTarget{}, err
 		}
 		quarkRememberTVFID(item.ID, fid2)
 	}
+	quarkLinkRemember(item.ID, u)
 	return PlayTarget{URL: u, UA: "", Cookie: ""}, nil
 }
 
-// qtvPickURL 按客户端类型取 TV 直链：
-//   - web=true（浏览器）：优先转码流（H.264 MP4，浏览器可解），失败回落原画；
-//   - web=false（飞牛/Emby/Infuse 等原生播放器）：只要原画，清晰度优先。
-func qtvPickURL(ctx context.Context, qtv *QuarkTV, fid string, web bool) (string, error) {
-	if web {
-		u, err := qtv.StreamingURL(ctx, fid)
-		if err == nil {
-			return u, nil
-		}
-		log.Printf("[quark-tv] 转码流不可用（%v），回落原画直链", err)
+// qtvPickURL 取 TV 直链：优先转码流（H.264 MP4，各播放器都能解，且该 CDN
+// 不限单连接——用户家宽实测多连接叠加 16MB/s，§23.58），失败回落原画
+// （万一片源本身就是 MP4/H.264 或转码任务没排上）。
+func qtvPickURL(ctx context.Context, qtv *QuarkTV, fid string) (string, error) {
+	u, err := qtv.StreamingURL(ctx, fid)
+	if err == nil {
+		return u, nil
 	}
+	log.Printf("[quark-tv] 转码流不可用（%v），回落原画直链", err)
 	return qtv.DownloadURL(ctx, fid)
+}
+
+// ---- 302 直链短缓存（降 API 调用频率，顺带降风控面）----
+//
+// 只缓存「最终 URL」，TTL 60s：TV 直链几分钟内有效，缓存远小于其寿命；
+// 真过期也是播放器吃一个 403 再要一次新链的事，无感。
+var (
+	quarkLinkMu    sync.Mutex
+	quarkLinkCache = map[string]quarkLinkEntry{}
+	quarkLinkTTL   = 60 * time.Second
+)
+
+type quarkLinkEntry struct {
+	url string
+	at  time.Time
+}
+
+func quarkLinkCached(id string) (string, bool) {
+	quarkLinkMu.Lock()
+	defer quarkLinkMu.Unlock()
+	e, ok := quarkLinkCache[id]
+	if !ok {
+		return "", false
+	}
+	if time.Since(e.at) > quarkLinkTTL {
+		delete(quarkLinkCache, id)
+		return "", false
+	}
+	return e.url, true
+}
+
+func quarkLinkRemember(id, url string) {
+	quarkLinkMu.Lock()
+	defer quarkLinkMu.Unlock()
+	quarkLinkCache[id] = quarkLinkEntry{url: url, at: time.Now()}
+}
+
+// quarkLinkReset 清空全部缓存（账号切换时调：新号的直链/转存目录都变了）。
+func quarkLinkReset() {
+	quarkLinkMu.Lock()
+	defer quarkLinkMu.Unlock()
+	quarkLinkCache = map[string]quarkLinkEntry{}
 }
 
 // ---- 分享级失败缓存（防播放器无限重试风暴）----

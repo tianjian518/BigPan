@@ -163,22 +163,29 @@ func TestQuarkFailCache(t *testing.T) {
 	}
 }
 
-// TestQuarkTVOriginalFirstDefault 默认必须「流畅优先」（转码流）：
-// 原画直链单连接限速 ~100KB/s，默认给原画等于默认卡（§23.56 实测）。
-func TestQuarkTVOriginalFirstDefault(t *testing.T) {
-	appSettingsMu.Lock()
-	appSettings = AppSettings{}
-	appSettingsMu.Unlock()
-	if quarkTVOriginalFirst() {
-		t.Fatal("默认应是流畅优先（转码流），不该是画质优先")
+// TestQuarkLinkCacheTTL 302 直链短缓存：命中直接返、过期重取、Reset 清空
+// （2026-10-20 §23.59：播放器每连接都要一次链，缓存 60s 把 API 调用量
+// 降到约十分之一，顺带降风控面）。
+func TestQuarkLinkCacheTTL(t *testing.T) {
+	quarkLinkReset()
+	if _, ok := quarkLinkCached("it-1"); ok {
+		t.Fatal("空缓存不应命中")
 	}
-	appSettingsMu.Lock()
-	appSettings = AppSettings{QuarkTVOriginal: true}
-	appSettingsMu.Unlock()
-	if !quarkTVOriginalFirst() {
-		t.Fatal("开了画质优先应返回 true")
+	quarkLinkRemember("it-1", "https://cdn.example/a.mp4")
+	u, ok := quarkLinkCached("it-1")
+	if !ok || u != "https://cdn.example/a.mp4" {
+		t.Fatalf("应命中刚存的链，got %q ok=%v", u, ok)
 	}
-	appSettingsMu.Lock()
-	appSettings = AppSettings{}
-	appSettingsMu.Unlock()
+	// 过期：把时间戳拨到 TTL 之外
+	quarkLinkMu.Lock()
+	quarkLinkCache["it-1"] = quarkLinkEntry{url: u, at: time.Now().Add(-2 * quarkLinkTTL)}
+	quarkLinkMu.Unlock()
+	if _, ok := quarkLinkCached("it-1"); ok {
+		t.Fatal("超过 TTL 不应命中")
+	}
+	quarkLinkRemember("it-1", "https://cdn.example/b.mp4")
+	quarkLinkReset()
+	if _, ok := quarkLinkCached("it-1"); ok {
+		t.Fatal("Reset 后不应命中")
+	}
 }

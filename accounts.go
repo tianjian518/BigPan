@@ -129,6 +129,7 @@ func retireOldAccount(old Account) {
 		quarkTmpDirReset()
 		quarkTempReset()
 		quarkFailCacheReset()
+		quarkLinkReset() // 302 直链短缓存也绑账号，一起清
 	}
 	if old.Provider == "baidu" && old.Cookie != "" {
 		go func(ck, label string) {
