@@ -239,6 +239,8 @@ table tr:hover td{background:#f7f9fc}
 .tag{display:inline-flex;align-items:center;background:var(--pri2);color:var(--pri);border-radius:6px;font-size:12px;padding:2.5px 9px;font-weight:600;white-space:nowrap}
 .tag.q{background:#e8f1ff;color:#1d6fd8}.tag.n{background:#fff2e0;color:#d97706}.tag.b{background:#e8f1ff;color:#1d6fd8}
 .tag.m{background:#e6f7ee;color:#18a058}.tag.t{background:#e8f8fb;color:#0891b2}
+/* 设置页「网盘账号」：盘名放大一倍（12→24px），表格里一眼能认 */
+#accts .tag{font-size:24px;padding:5px 16px;border-radius:9px;line-height:1.3}
 
 /* ============ 提示 / 弹层 ============ */
 .toast{position:fixed;top:26px;left:50%;transform:translate(-50%,-16px);background:rgba(28,32,38,.92);backdrop-filter:blur(6px);color:#fff;padding:11px 22px;border-radius:10px;opacity:0;transition:all .28s cubic-bezier(.2,.8,.3,1);pointer-events:none;z-index:99;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);border-left:3px solid var(--pri);max-width:82vw}
@@ -1412,7 +1414,7 @@ function loadAccts(){
     var arr=d.accounts||d||[];if(!Array.isArray(arr))arr=[];
     var map={};for(var i=0;i<arr.length;i++)map[arr[i].provider]=arr[i];
     ACCTS_MAP=map; // 缓存：连接弹窗要据此判断「另一样凭证连了没」
-    var t='<tr><th style="width:110px">网盘</th><th>状态</th><th style="width:100px;text-align:right">操作</th></tr>';
+    var t='<tr><th style="width:150px">网盘</th><th>状态</th><th style="width:100px;text-align:right">操作</th></tr>';
     for(var j=0;j<PV_LIST.length;j++){
       var p=PV_LIST[j],a=map[p.pv];
       if(p.pv==='quark'){
