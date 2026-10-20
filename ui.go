@@ -1237,16 +1237,26 @@ function toggleView(){
 // 片源还常是 MKV/H.265。硬拼 /play 不仅必然失败，失败前还会把视频流量
 // 漏进服务器——所以直接给明确提示，别让用户对着黑屏转圈。
 var PVHINT=false;
+// 百度浏览器代取开关状态（设置页开关，影响网页播放器能否试播百度）
+var BAIDURELAY=false;
+function loadRelayFlag(){
+  fetch('/api/strm/config').then(function(r){return r.json()}).then(function(d){
+    if(d.ok&&d.config)BAIDURELAY=!!d.config.baidu_browser_relay;
+  }).catch(function(){});
+}
 function openPlayer(id){
   var it=null;
   for(var i=0;i<ITEMS.length;i++){if(ITEMS[i].id===id)it=ITEMS[i]}
   if(!it)return;
   CURID=id;$('pvName').textContent=(it.dir?it.dir+'/':'')+(it.title||'')+(it.ext||'');
   $('player').style.display='flex';$('pvmsg').style.display='flex';
-  if(it.provider&&it.provider!=='quark'&&!it.url){
+  var relayable=it.provider==='baidu'&&BAIDURELAY;
+  if(it.provider&&it.provider!=='quark'&&!it.url&&!relayable){
     PVHINT=true;
     $('pv').removeAttribute('src');try{$('pv').load()}catch(e){}
-    $('pvmsg').innerHTML='<b>'+(PVCN[it.provider]||it.provider)+'不能在网页里播放</b><br><small>直链只认播放器，浏览器会被网盘拒绝，这是正常现象。<br>请用飞牛影视 / Emby 通过 STRM 或 WebDAV 观看，<br>或点上方「复制直链」给外部播放器使用。</small>';
+    var tip='<b>'+(PVCN[it.provider]||it.provider)+'不能在网页里播放</b><br><small>直链只认播放器，浏览器会被网盘拒绝，这是正常现象。<br>请用飞牛影视 / Emby 通过 STRM 或 WebDAV 观看，<br>或点上方「复制直链」给外部播放器使用。</small>';
+    if(it.provider==='baidu')tip='<b>百度默认 302 直连，浏览器会被拒</b><br><small>到「设置」打开「百度浏览器代取」后就能试播（流量经过本机）。<br>MKV / H.265 这类片源浏览器本身解不了，还是用飞牛 / Emby 看。</small>';
+    $('pvmsg').innerHTML=tip;
     return;
   }
   PVHINT=false;
@@ -1359,7 +1369,7 @@ function saveStrm(){
   };
   fetch('/api/strm/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
   .then(function(r){return r.json()}).then(function(d){
-    if(d.ok){toast('已重建 '+d.count+' 个 .strm');loadStrm();}
+    if(d.ok){toast('已重建 '+d.count+' 个 .strm');loadStrm();loadRelayFlag();}
     else toast(d.error||'保存失败');
   }).catch(function(){toast('保存失败')});
 }
@@ -1582,6 +1592,7 @@ function delAcc(p){
   });
 }
 loadHome();
+loadRelayFlag();
 </script>
 </body></html>`
 	return page
