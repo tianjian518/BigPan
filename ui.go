@@ -335,6 +335,12 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     <div id="pg-home" class="pg">
       <div class="pagehd"><h2>概览</h2><span class="sub">文件始终在网盘里，不占你一点空间</span></div>
       <div class="stat" id="stats"></div>
+      <div class="card"><div class="chd"><b>WebDAV 挂载地址</b><span class="csub">填进爆米花 / rclone 等客户端，可列目录、可读文件</span></div>
+        <div class="row" style="margin-top:12px;align-items:center">
+          <code id="davUrl" style="flex:1;min-width:0;overflow:auto;white-space:nowrap"></code>
+          <button class="gray copybtn" onclick="copyText('davUrl',this)" title="复制这个地址">复制</button>
+        </div>
+      </div>
       <div class="card" id="guide" style="display:none">
         <div class="chd"><b>第一次用？三步走完</b><span class="csub">不用看文档，跟着点就行</span></div>
         <div class="guide" style="margin-top:14px">
@@ -395,7 +401,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       </div>
     </div>
     <div id="pg-set" style="display:none">
-      <div class="pagehd"><h2>设置</h2><span class="sub">网盘取流凭证与播放器接入地址</span></div>
+      <div class="pagehd"><h2>设置</h2><span class="sub">网盘取流凭证与 STRM 导出</span></div>
       <div class="card"><b style="font-size:14px">网盘账号（取流凭证）<span class="cd">解析分享不需要账号；播放取流才需要，连一次就行</span></b>
         <div class="sub" style="margin:8px 0 0">下面列着所有能连的网盘，连没连都标着呢。要连哪个就点它后面的「<b>连接</b>」，照着弹窗里的步骤做，一分钟连一个。换号：点「退出/换号」再连新的——旧凭证自动作废，百度的旧临时文件后台清理，不用重启。</div>
         <table id="accts" style="margin-top:10px"></table>
@@ -420,18 +426,11 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <div class="swrow">
           <div class="swmain">
             <div class="swt">百度浏览器代取</div>
-            <div class="swd">默认关闭，保持纯 302、数据不过本机。开启后：在<b>浏览器</b>里直接点开百度分享的视频也能播放，但<b>这部分流量要经过本机</b>（服务器流量/带宽有上限的要留意）。飞牛影视 / Emby / Kodi 等媒体服务器<b>不受此开关影响</b>，始终走 302；其他网盘也不受影响。</div>
+            <div class="swd"><b>关闭</b>：保持 302，浏览器无法播放。<b>开启</b>：走本机代理，就可以在浏览器播放。</div>
           </div>
           <label class="sw"><input type="checkbox" id="baiduRelay"><i></i></label>
         </div>
         <div class="sub" style="margin:10px 0 0;font-size:13px">夸克开关<b>立即生效</b>；百度开关随下面「保存并重建」一起生效。</div>
-      </div>
-      <div class="card">
-        <b style="font-size:14px">播放器接入<span class="cd">把这两个地址填进对应的客户端，文件就开始流转了</span></b>
-        <table style="margin-top:8px">
-          <tr><td style="width:130px;color:var(--mut);vertical-align:top">WebDAV 挂载</td><td><code id="davUrl"></code><button class="gray copybtn" onclick="copyText('davUrl',this)" title="复制这个地址">复制</button><br><small style="color:var(--mut)">给爆米花 / rclone 等客户端挂载用：可列目录、可读文件</small></td></tr>
-          <tr><td style="color:var(--mut);vertical-align:top">STRM 播放端点</td><td><code id="directUrl"></code><button class="gray copybtn" onclick="copyText('directUrl',this)" title="复制这个地址">复制</button><br><small style="color:var(--mut)">给飞牛 / Emby 读 .strm 用：302 跳网盘直链</small></td></tr>
-        </table>
       </div>
       <div class="card">
         <b style="font-size:14px">STRM 导出（媒体库用）<span class="cd">不用飞牛 / Emby 的话，这张卡可以完全不管</span></b>
@@ -456,7 +455,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
           <button class="gray" onclick="rebuildSTRM()">全量重建 STRM</button>
           <span class="sub" id="strmHint" style="margin-left:8px"></span>
         </div>
-        <div class="sub" style="margin:8px 0 0;font-size:13px">.strm 是给飞牛 / Emby / Jellyfin 扫描的索引文件，指向上面「播放器接入」里的 STRM 端点；和 WebDAV 挂载各管各的，改这里不影响它。<br>
+        <div class="sub" style="margin:8px 0 0;font-size:13px">.strm 是给飞牛 / Emby / Jellyfin 扫描的索引文件，指向「对外地址 + /direct」；和 WebDAV 挂载各管各的，改这里不影响它。<br>
         「保存并重建」只补有变化的部分，地址没变时媒体库基本无感；「全量重建」<b>平时别点</b>——只有对外地址变了（上面弹红色横幅）才需要：它会重写所有 .strm，媒体库跟着重新刮削全库，片子多时要等一阵，属正常现象。</div>
       </div>
     </div>
@@ -482,7 +481,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <div class="row" style="margin-bottom:12px">
         <select id="cmSel1" style="flex:1;min-width:150px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat1ChangeModal()"></select>
         <select id="cmSel2" style="display:none;flex:1;min-width:150px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat2ChangeModal()"></select>
-        <input type="text" id="cmNew1" placeholder="一级分类名，如：电视剧" style="display:none;flex:1;min-width:130px">
+        <input type="text" id="cmNew1" placeholder="一级分类名，如：电视剧" style="display:none;flex:1;min-width:130px" oninput="onCatNew1Input('cmSel2','cmNew1')">
         <input type="text" id="cmNew2" placeholder="二级分类名，如：国产剧" style="display:none;flex:1;min-width:130px">
       </div>
       <div style="color:var(--mut);font-size:12.5px;line-height:1.7">改分类会把这个剧在媒体库里的位置搬过去（.strm 文件跟着搬家），已入库的剧集不受影响；以后追更出来的新剧集也归到新分类。片子多时媒体库会重新刮削这一部，属正常现象。</div>
@@ -582,6 +581,7 @@ var ICO={
 function loadHome(){
   $('stats').innerHTML='<div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div>';
   $('recent').innerHTML='<tr><td class="loading" colspan="3"><span class="spin"></span>加载中…</td></tr>';
+  $('davUrl').textContent=SELF+'/dav';
   loadItems(function(){
     // 空库时显示三步引导；有任何内容就收起，概览回归数据本身
     $('guide').style.display=ITEMS.length?'none':'';
@@ -669,7 +669,7 @@ function doParse(){
     h+='<div class="row" style="margin:0 0 10px"><span class="sub" style="margin:0;white-space:nowrap;font-weight:600;color:var(--txt)">分类：</span>'+
       '<select id="catSel1" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat1Change()"></select>'+
       '<select id="catSel2" style="display:none;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat2Change()"></select>'+
-      '<input type="text" id="catNew1" placeholder="一级分类名，如：电视剧" style="display:none;flex:1;min-width:130px">'+
+      '<input type="text" id="catNew1" placeholder="一级分类名，如：电视剧" style="display:none;flex:1;min-width:130px" oninput="onCatNew1Input(\'catSel2\',\'catNew1\')">'+
       '<input type="text" id="catNew2" placeholder="二级分类名，如：国产剧" style="display:none;flex:1;min-width:130px">'+
       '<span class="sub" style="margin:0;white-space:nowrap;font-weight:600;color:var(--txt)">剧名：</span>'+
       '<input type="text" id="showName" style="flex:1;min-width:200px" value="'+esc(d.title)+'"></div>'+
@@ -942,6 +942,13 @@ function catSel1Change(i1,i2,n1,n2){
   if(v==='__new1__'){$(i2).style.display='none';$(n1).focus();}
   else if(v){$(i2).style.display='';fillCat2(i2,v,'');}
   else $(i2).style.display='none';
+}
+// 新建一级时边输边把二级下拉挂到这个新一级下（输「电视剧」→ 二级可建「国产剧」）
+function onCatNew1Input(i2,n1){
+  var v=($(n1).value||'').trim();
+  if(!v){$(i2).style.display='none';return;}
+  $(i2).style.display='';
+  fillCat2(i2,v,'');
 }
 function catSel2Change(i2,n2){
   var v=$(i2).value;
@@ -1233,10 +1240,6 @@ function copyText(id,btn){
 }
 // ---- 设置 ----
 function loadSet(){
-  loadItems(function(){
-    $('davUrl').textContent=SELF+'/dav';
-    $('directUrl').textContent=SELF+'/direct';
-  });
   loadAccts();
   loadStrm();
   loadSettings();
