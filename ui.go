@@ -127,11 +127,13 @@ h2{font-size:21px;font-weight:700;letter-spacing:.2px}
 .selbar b{font-weight:600;white-space:nowrap}
 .sp{flex:1}
 .stat{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
-.stat .card{flex:1;min-width:140px;margin:0;padding:18px 14px;text-align:center;cursor:default}
-.stat b{font-size:23px;font-weight:700;color:var(--pri);font-variant-numeric:tabular-nums;display:block;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stat span{display:block;color:var(--mut);font-size:12.5px;margin-top:3px}
-.stat .si{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin:0 auto 9px}
-.stat .si svg{width:17px;height:17px;stroke:currentColor}
+.stat .card{flex:1;min-width:140px;margin:0;padding:20px 14px 18px;text-align:center;cursor:default}
+.stat b{font-size:26px;font-weight:700;color:var(--pri);font-variant-numeric:tabular-nums;display:block;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 标签做成浅蓝底胶囊：比裸灰字醒目，8 张卡并排时一眼能读 */
+.stat span{display:inline-block;color:#3d4a63;font-size:13px;font-weight:500;margin-top:9px;padding:3px 12px;border-radius:20px;background:#f1f6fd;border:1px solid #dfe9f7;line-height:1.5}
+.stat span.plain{display:block;background:none;border:0;padding:0}
+.stat .si{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin:0 auto 10px}
+.stat .si svg{width:18px;height:18px;stroke:currentColor}
 .si.b{background:#e8f1ff;color:#1d6fd8}.si.p{background:#f1ebff;color:#7c3aed}
 .si.o{background:#fff3e2;color:#e8890c}.si.g{background:#e6f7ee;color:#18a058}
 
@@ -289,7 +291,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
   .side-ft{display:none}
   .main{padding:16px 14px}
   h2{font-size:18px}
-  .stat b{font-size:22px}
+  .stat b{font-size:24px}
   .pagehd{gap:8px}
   .srch{max-width:none}
   .lvt tbody tr .acts{opacity:1}
@@ -510,6 +512,8 @@ var ITEMS=[], SELF='', CURID='', TREE={}, PARSED=null, MOK=null;
 // 隐藏的行同样计入“全选”，导入时按 SELMAP 取，不依赖 DOM。
 var PARSELIMIT=8, PARSESHOWALL=false, SELMAP=[];
 var PVCN={quark:'夸克网盘','115':'115网盘',mobile139:'移动云盘',tianyi:'天翼云盘',baidu:'百度网盘'};
+// 列表/概览里的短名：「夸克/电视剧/国产剧」比「夸克网盘/…」清爽
+var PVSHORT={quark:'夸克','115':'115',mobile139:'移动',tianyi:'天翼',baidu:'百度'};
 var PVCLS={quark:'q','115':'n',mobile139:'m',tianyi:'t',baidu:'b'};
 var VIDEO_EXTS=/\.(mkv|mp4|ts|avi|mov|wmv|flv|webm|rmvb|iso|m2ts)$/i;
 function $(x){return document.getElementById(x)}
@@ -581,8 +585,8 @@ var ICO={
 function loadHome(){
   $('stats').innerHTML='<div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div>';
   $('recent').innerHTML='<tr><td class="loading" colspan="3"><span class="spin"></span>加载中…</td></tr>';
-  $('davUrl').textContent=SELF+'/dav';
   loadItems(function(){
+    $('davUrl').textContent=SELF+'/dav'; // 必须在 loadItems 回调里：SELF 此时才有值
     // 空库时显示三步引导；有任何内容就收起，概览回归数据本身
     $('guide').style.display=ITEMS.length?'none':'';
     var total=0, byPv={}, shows={};
@@ -598,7 +602,7 @@ function loadHome(){
     var h='<div class="card"><div class="si b">'+ICO.film+'</div><b>'+ITEMS.length+'</b><span>个文件</span></div>';
     h+='<div class="card"><div class="si o">'+ICO.layers+'</div><b>'+n+'</b><span>部影片/剧集</span></div>';
     h+='<div class="card"><div class="si p">'+ICO.db+'</div><b>'+humanSize(total)+'</b><span>总容量</span></div>';
-    for(var p in byPv){h+='<div class="card"><div class="si g">'+ICO.db+'</div><b>'+byPv[p]+'</b><span>'+esc(p)+'</span></div>'}
+    for(var p in byPv){h+='<div class="card"><div class="si g">'+ICO.db+'</div><b>'+byPv[p]+'</b><span>'+esc(PVSHORT[p]||p)+'</span></div>'}
     $('stats').innerHTML=h;
     fetch('/api/shares').then(function(r){return r.json()}).then(function(d){
       var arr=(d.shares||[]).filter(function(s){return s.auto_refresh});
@@ -614,7 +618,7 @@ function loadHome(){
       el.style.borderColor='#f0c4cd';el.style.background='var(--danger2)';
       el.innerHTML='<div class="si" style="background:#fff;color:var(--danger)">'+ICO.refresh+'</div>'+
         '<b style="color:var(--danger);font-size:16px">STRM 待重建</b>'+
-        '<span style="color:#a12842">对外地址变了，老片子的 .strm 还指着旧地址、已播不了：去「设置」→ STRM 导出，点「全量重建 STRM」一次性修好</span>';
+        '<span class="plain" style="color:#a12842;font-weight:400">对外地址变了，老片子的 .strm 还指着旧地址、已播不了：去「设置」→ STRM 导出，点「全量重建 STRM」一次性修好</span>';
       var box=$('stats');if(box)box.appendChild(el);
     }).catch(function(){});
     // 按「分享」聚合：一个分享链接 = 一部剧 / 一部电影，绝不把每一集单独铺一行
@@ -821,8 +825,11 @@ function loadShares(page){
     if(!arr.length)t+='<tr><td colspan=5><div class="empty" style="padding:30px 10px"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4.5-4.5M12 15 7.5 10.5"/><path d="M4 16.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5"/></svg></div><b>还没有导入过分享</b>粘贴一个网盘分享链接，几秒钟收进虚拟盘</div></td></tr>';
     for(var i=0;i<arr.length;i++){
       var s=arr[i];
-      var st=s.auto_refresh, cat=s.category||'—';
-      t+='<tr><td>'+esc(cleanShow(s.show_name))+'<div class="tmeta">'+esc(cat)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
+      var st=s.auto_refresh, cat=s.category||'未分类';
+      // 显示「网盘/分类」（如 夸克/电视剧/国产剧），一眼看出这部在哪个盘
+      var pvShort=PVSHORT[s.provider]||s.provider||'';
+      var catPath=pvShort?pvShort+'/'+cat:cat;
+      t+='<tr><td>'+esc(cleanShow(s.show_name))+'<div class="tmeta">'+esc(catPath)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
         '<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>'+
         '<td><button class="mini" onclick="refreshShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+esc(s.passcode||'')+'\')">刷新</button> '+
         '<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类，以后追更出来的新剧集也归新分类">分类</button> '+
