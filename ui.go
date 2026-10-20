@@ -969,7 +969,13 @@ function doChangeCat(){
   toast('正在改分类…');
   fetch('/api/shares/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:m.provider,share_id:m.share_id,category:cat})})
   .then(function(r){return r.json()}).then(function(d){
-    if(d.ok){toast('已改到「'+(d.category||'不分类')+'」，'+d.moved+' 个文件换了位置');loadShares();}
+    if(d.ok){
+      toast('已改到「'+(d.category||'不分类')+'」，'+d.moved+' 个文件换了位置');
+      loadShares();
+      // 在媒体库里改的：目录结构变了，跳回根目录刷新一下
+      var pl=document.getElementById('pg-lib');
+      if(pl&&pl.style.display!=='none'){CURPATH=[];loadLib();}
+    }
     else toast(d.error||'改分类失败');
   }).catch(function(){toast('改分类失败')});
 }
@@ -1003,6 +1009,22 @@ function collectIds(node){
   (node.__files||[]).forEach(function(it){out.push(it.id)});
   for(var k in node){ if(k!=='__files') out=out.concat(collectIds(node[k])); }
   return out;
+}
+// 目录下所有文件若同属一个分享（= 一部剧/一部电影），返回分享信息，用于「分类」按钮。
+// 网盘层、分类层会混多个分享，返回 null——那里不给分类入口。
+function dirShare(node){
+  var items=[];
+  (function walk(n){
+    (n.__files||[]).forEach(function(it){items.push(it)});
+    for(var k in n){ if(k!=='__files') walk(n[k]); }
+  })(node);
+  if(!items.length) return null;
+  var pv=items[0].provider, sid=items[0].share_id;
+  if(!sid) return null;
+  for(var i=1;i<items.length;i++){
+    if(items[i].provider!==pv||items[i].share_id!==sid) return null;
+  }
+  return {provider:pv, share_id:sid, show:items[0].show||'', category:items[0].category||''};
 }
 function goPath(p){ CURPATH=p||[]; SEL=[]; paintLib(); }
 function openLibPlayer(id){ openPlayer(id); }
@@ -1044,12 +1066,17 @@ function renderLib(){
     '</tr></thead><tbody>';
   dirs.forEach(function(name){
     var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
-    h+='<tr class="librow dirrow" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'">'+
+    var si=dirShare(dn); // 单分享目录（剧名层）才给「分类」
+    var ops=si
+      ? '<button class="mini" data-act="cat">分类</button><button class="mini danger" data-act="del">删除</button>'
+      : '<button class="mini danger" data-act="del">删除</button>';
+    h+='<tr class="librow dirrow" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'"'+
+      ' data-cat-p="'+escA(si?si.provider:'')+'" data-cat-id="'+escA(si?si.share_id:'')+'" data-cat-show="'+escA(si?cleanShow(si.show):'')+'" data-cat-cur="'+escA(si?si.category:'')+'">'+
       '<td class="ckc"><input type="checkbox" class="ckL" onchange="updLibSel()"></td>'+
       '<td><span class="fv" data-act="open">'+svgFolder()+'<span class="nm"><b>'+esc(cleanShow(name))+'</b><span class="dircnt">'+cnt+' 项</span></span></span></td>'+
       '<td class="libsz">—</td>'+
       '<td class="libtm">—</td>'+
-      '<td class="ops"><span class="acts"><button class="mini gray" data-act="open">打开</button><button class="mini danger" data-act="del">删除</button></span></td>'+
+      '<td class="ops"><span class="acts">'+ops+'</span></td>'+
       '</tr>';
   });
   files.forEach(function(it){
@@ -1126,6 +1153,15 @@ function bindLibRows(){
           b.onclick=function(e){ e.stopPropagation();
             if(act==='open'){ if(type==='dir') goPath(p); else openLibPlayer(ids[0]); }
             else if(act==='play'){ openLibPlayer(ids[0]); }
+            else if(act==='cat'){
+              // 复用「改分类」弹窗：把行上的分享信息塞进一个临时元素
+              var fake=document.createElement('button');
+              fake.setAttribute('data-p',r.getAttribute('data-cat-p')||'');
+              fake.setAttribute('data-id',r.getAttribute('data-cat-id')||'');
+              fake.setAttribute('data-show',r.getAttribute('data-cat-show')||'');
+              fake.setAttribute('data-cur',r.getAttribute('data-cat-cur')||'');
+              openCatModal(fake);
+            }
             else if(act==='del'){ delIds(ids,nm,cnt); }
           };
         })(acts[j]);
