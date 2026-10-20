@@ -162,3 +162,23 @@ func TestQuarkFailCache(t *testing.T) {
 		t.Fatal("Reset 后不应命中")
 	}
 }
+
+// TestQuarkTVOriginalFirstDefault 默认必须「流畅优先」（转码流）：
+// 原画直链单连接限速 ~100KB/s，默认给原画等于默认卡（§23.56 实测）。
+func TestQuarkTVOriginalFirstDefault(t *testing.T) {
+	appSettingsMu.Lock()
+	appSettings = AppSettings{}
+	appSettingsMu.Unlock()
+	if quarkTVOriginalFirst() {
+		t.Fatal("默认应是流畅优先（转码流），不该是画质优先")
+	}
+	appSettingsMu.Lock()
+	appSettings = AppSettings{QuarkTVOriginal: true}
+	appSettingsMu.Unlock()
+	if !quarkTVOriginalFirst() {
+		t.Fatal("开了画质优先应返回 true")
+	}
+	appSettingsMu.Lock()
+	appSettings = AppSettings{}
+	appSettingsMu.Unlock()
+}

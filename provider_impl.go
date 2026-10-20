@@ -60,7 +60,10 @@ func (quarkProvider) ResolvePlay(item *Item) (PlayTarget, error) {
 	// 开关打开：转存到临时目录 → TV 接口取免认证直链（UA/Cookie 全空，可 302）。
 	// 开关关闭：现状 —— 分享直链绑登录会话，本机中转。
 	if quarkTV302Enabled() {
-		return quarkTVPlayTarget(item)
+		// web 参数语义 = 「优先转码流」。默认 true（流畅优先）：实测原画
+		// 直链单连接限速 ~100KB/s，1080p 必卡（§23.56）；用户在设置里开
+		// 「画质优先」后才拿原画。
+		return quarkTVPlayTargetMode(item, !quarkTVOriginalFirst())
 	}
 	q := quarkClient(globalAccounts)
 	if q == nil {

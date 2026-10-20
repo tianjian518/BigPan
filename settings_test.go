@@ -33,7 +33,7 @@ func TestAppSettingsRoundtrip(t *testing.T) {
 		t.Fatal("setQuarkTV302(false) 后应关闭")
 	}
 	b, _ := os.ReadFile(p)
-	if string(b) != "{\n  \"quark_tv_302\": false\n}" {
+	if string(b) != "{\n  \"quark_tv_302\": false,\n  \"quark_tv_original\": false\n}" {
 		t.Fatalf("落盘内容不对: %s", b)
 	}
 }

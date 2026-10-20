@@ -413,8 +413,9 @@ func resolveDirectURL(it *Item) (string, error) {
 // resolvePlayFresh 强制重新解析某条目的播放直链（先丢弃旧缓存再解析）。
 //
 // 两处用到：
-//  ① 缓存未命中时的首次解析；
-//  ② 流式中途上游直链失效时的「自愈」重解析（见 streamRange）。
+//
+//	① 缓存未命中时的首次解析；
+//	② 流式中途上游直链失效时的「自愈」重解析（见 streamRange）。
 //
 // 注意：分享类条目每次都调网盘接口换直链（有 API 开销），所以只在缓存缺失
 // 或确实失效时才走这条路；静态 URL 条目则无需重新解析。
@@ -533,21 +534,21 @@ func directGuard(store *Store) http.Handler {
 			if dec, err := url.PathUnescape(name); err == nil {
 				name = dec
 			}
-		it := store.FindByName(name)
-		if it != nil {
-			// 夸克 + 开关关着：分享直链绑登录会话，客户端直连会被 412 拒，
-			// 不能 302 —— 转交 /play 走本机中转（开关关着时生成的存量
-			// /direct .strm 靠这条路继续播；开关开着时根本不会写 /direct 夸克）。
-			if strings.EqualFold(it.Provider, "quark") && !quarkTV302Enabled() {
-				v := url.Values{}
-				v.Set("id", it.ID)
-				if it.Size > 0 {
-					v.Set("size", fmt.Sprintf("%d", it.Size))
+			it := store.FindByName(name)
+			if it != nil {
+				// 夸克 + 开关关着：分享直链绑登录会话，客户端直连会被 412 拒，
+				// 不能 302 —— 转交 /play 走本机中转（开关关着时生成的存量
+				// /direct .strm 靠这条路继续播；开关开着时根本不会写 /direct 夸克）。
+				if strings.EqualFold(it.Provider, "quark") && !quarkTV302Enabled() {
+					v := url.Values{}
+					v.Set("id", it.ID)
+					if it.Size > 0 {
+						v.Set("size", fmt.Sprintf("%d", it.Size))
+					}
+					http.Redirect(w, r, "/play/"+url.PathEscape(it.FileName())+"?"+v.Encode(), http.StatusFound)
+					return
 				}
-				http.Redirect(w, r, "/play/"+url.PathEscape(it.FileName())+"?"+v.Encode(), http.StatusFound)
-				return
-			}
-			u, err := resolveDirectURL(it)
+				u, err := resolveDirectURL(it)
 				if err != nil {
 					log.Printf("  [直链] %s 解析失败: %v", it.FileName(), err)
 					http.Error(w, "取直链失败: "+err.Error(), http.StatusBadGateway)
@@ -601,50 +602,49 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 		// 取播放目标：分享条目先实时解析出直链
 		var it *Item
 		var target string
-	if id := q.Get("id"); id != "" {
-		it = store.FindByID(id)
-		if it == nil {
-			http.Error(w, "条目不存在", http.StatusNotFound)
-			return
+		if id := q.Get("id"); id != "" {
+			it = store.FindByID(id)
+			if it == nil {
+				http.Error(w, "条目不存在", http.StatusNotFound)
+				return
+			}
 		}
-	}
 
-	// 夸克 + 开关开着：不走本机中转，内部解析出 TV 免认证直链后回 302，
-	// 客户端直连网盘 CDN，数据不经过本机（存量 /play .strm 的兼容路——
-	// 开关关着时生成的 /play 地址，开关打开后照样能播）。
-	if it != nil && strings.EqualFold(it.Provider, "quark") && quarkTV302Enabled() {
-		// 浏览器（含项目自带的网页播放器）解不开 MKV/H.265 原画（备忘录
-		// §23.30）：UA 是浏览器时改取 TV 转码流（H.264 MP4，仍是免认证
-		// CDN 直链，302 后数据不经过本机）。原生播放器（飞牛/Emby/Infuse，
-		// isBrowserUA 已排除）照旧拿原画，清晰度优先。
-		var u string
-		var uerr error
-		if isBrowserUA(r.Header.Get("User-Agent")) {
+		// 夸克 + 开关开着：不走本机中转，内部解析出 TV 免认证直链后回 302，
+		// 客户端直连网盘 CDN，数据不经过本机（存量 /play .strm 的兼容路——
+		// 开关关着时生成的 /play 地址，开关打开后照样能播）。
+		//
+		// 清晰度策略（2026-10-20 §23.56 实测定）：TV 原画直链单连接被 CDN
+		// 限速到 ~100KB/s（0.8Mbps），1080p 片源要 5Mbps，差 6 倍必卡——
+		// 爆米花/Filmly 都是单连接拉流，4K 原画卡死、1080p 也卡。转码流
+		// 直链单连接 1-2MB/s，够 1080p 档流畅。默认全部走转码流；用户在
+		// 设置里开「画质优先」才拿原画（仅建议局域网/高带宽）。
+		if it != nil && strings.EqualFold(it.Provider, "quark") && quarkTV302Enabled() {
+			var u string
+			var uerr error
 			var pt PlayTarget
-			pt, uerr = quarkTVPlayTargetMode(it, true)
+			pt, uerr = quarkTVPlayTargetMode(it, !quarkTVOriginalFirst())
 			u = pt.URL
 			if uerr == nil {
-				log.Printf("  [直链] %s → 302 跳转（夸克 TV 网页转码流，数据不经过本机）", it.FileName())
+				mode := "夸克 TV 转码流"
+				if quarkTVOriginalFirst() {
+					mode = "夸克 TV 原画"
+				}
+				log.Printf("  [直链] %s → 302 跳转（%s，数据不经过本机）", it.FileName(), mode)
 			}
-		} else {
-			u, uerr = resolveDirectURL(it)
-			if uerr == nil {
-				log.Printf("  [直链] %s → 302 跳转（夸克 TV 原画，数据不经过本机）", it.FileName())
+			if uerr != nil {
+				if it.IsShare() {
+					log.Printf("  [%s] 取流失败: %v", it.Provider, uerr)
+				}
+				http.Error(w, "取流失败: "+uerr.Error(), http.StatusBadGateway)
+				return
 			}
-		}
-		if uerr != nil {
-			if it.IsShare() {
-				log.Printf("  [%s] 取流失败: %v", it.Provider, uerr)
-			}
-			http.Error(w, "取流失败: "+uerr.Error(), http.StatusBadGateway)
+			// 禁止缓存 302 目标：直链几秒~几分钟内过期，缓存后第二次播放拿死链。
+			w.Header().Set("Cache-Control", "no-store, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+			http.Redirect(w, r, u, http.StatusFound)
 			return
 		}
-		// 禁止缓存 302 目标：直链几秒~几分钟内过期，缓存后第二次播放拿死链。
-		w.Header().Set("Cache-Control", "no-store, max-age=0")
-		w.Header().Set("Pragma", "no-cache")
-		http.Redirect(w, r, u, http.StatusFound)
-		return
-	}
 
 		conc := *flagConc
 		if v := q.Get("conc"); v != "" {
@@ -670,62 +670,62 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 		// 解析播放目标（带缓存）
 		// 关键：播放器常按「分段」读，若每段都重换直链 + 重探源站 + 重建 TLS，
 		// 固定开销会吃掉大部分带宽。缓存后第二段起近乎零准备。
-	var pool *connPool
-	var pt *playTarget
-	if it != nil {
-		pt = getPlayTarget(it.ID)
-	}
+		var pool *connPool
+		var pt *playTarget
+		if it != nil {
+			pt = getPlayTarget(it.ID)
+		}
 
-	if pt == nil {
-		tResolve := time.Now()
-		pt2, rerr := resolvePlayFresh(it, q.Get("url"), conc)
-		if rerr != nil {
-			if it != nil && it.IsShare() {
-				log.Printf("  [%s] 取流失败: %v", it.Provider, rerr)
+		if pt == nil {
+			tResolve := time.Now()
+			pt2, rerr := resolvePlayFresh(it, q.Get("url"), conc)
+			if rerr != nil {
+				if it != nil && it.IsShare() {
+					log.Printf("  [%s] 取流失败: %v", it.Provider, rerr)
+				}
+				http.Error(w, "取流失败: "+rerr.Error(), http.StatusBadGateway)
+				return
 			}
-			http.Error(w, "取流失败: "+rerr.Error(), http.StatusBadGateway)
+			pt = pt2
+			log.Printf("  [计时] 首次解析直链耗时 %.2fs", time.Since(tResolve).Seconds())
+		}
+		ua = pt.ua
+
+		target = pt.url
+		pool = getPool(conc, ua, pt.cookie)
+		size, supportRange := pt.size, pt.ranged
+
+		if !supportRange || size <= 0 {
+			log.Printf("→ %s | 源站不支持 Range，单连接透传", truncate(target, 90))
+			proxyPlain(w, r, target, ua, pool.get(0))
 			return
 		}
-		pt = pt2
-		log.Printf("  [计时] 首次解析直链耗时 %.2fs", time.Since(tResolve).Seconds())
-	}
-	ua = pt.ua
 
-	target = pt.url
-	pool = getPool(conc, ua, pt.cookie)
-	size, supportRange := pt.size, pt.ranged
+		start, end, hasRange := parseClientRange(r, size)
 
-	if !supportRange || size <= 0 {
-		log.Printf("→ %s | 源站不支持 Range，单连接透传", truncate(target, 90))
-		proxyPlain(w, r, target, ua, pool.get(0))
-		return
-	}
-
-	start, end, hasRange := parseClientRange(r, size)
-
-	// 读到文件末尾（播放器探测时长 / seek 到尾）：返回 0 长度 206，不回吐数据。
-	// 否则会把整段文件回吐给「只想拿个时长」的客户端，造成误读。
-	if hasRange && start >= size {
-		h := w.Header()
-		h.Set("Accept-Ranges", "bytes")
-		h.Set("Content-Range", fmt.Sprintf("bytes */%d", size))
-		h.Set("Content-Length", "0")
-		w.WriteHeader(http.StatusPartialContent)
-		return
-	}
-
-	// 自愈重解析闭包：流式中途直链失效时，丢弃旧缓存并重新换直链。
-	// 仅分享类条目需要（静态 URL 不会过期）；/dav 经此实现「断流续传」。
-	var reresolve func() (string, string, string, error)
-	if it != nil && it.IsShare() {
-		reresolve = func() (string, string, string, error) {
-			pt2, e := resolvePlayFresh(it, "", conc)
-			if e != nil {
-				return "", "", "", e
-			}
-			return pt2.url, pt2.ua, pt2.cookie, nil
+		// 读到文件末尾（播放器探测时长 / seek 到尾）：返回 0 长度 206，不回吐数据。
+		// 否则会把整段文件回吐给「只想拿个时长」的客户端，造成误读。
+		if hasRange && start >= size {
+			h := w.Header()
+			h.Set("Accept-Ranges", "bytes")
+			h.Set("Content-Range", fmt.Sprintf("bytes */%d", size))
+			h.Set("Content-Length", "0")
+			w.WriteHeader(http.StatusPartialContent)
+			return
 		}
-	}
+
+		// 自愈重解析闭包：流式中途直链失效时，丢弃旧缓存并重新换直链。
+		// 仅分享类条目需要（静态 URL 不会过期）；/dav 经此实现「断流续传」。
+		var reresolve func() (string, string, string, error)
+		if it != nil && it.IsShare() {
+			reresolve = func() (string, string, string, error) {
+				pt2, e := resolvePlayFresh(it, "", conc)
+				if e != nil {
+					return "", "", "", e
+				}
+				return pt2.url, pt2.ua, pt2.cookie, nil
+			}
+		}
 
 		// 自动分片：一次请求至少要能切成 conc*2 片，并发才吃得满。
 		// 播放器常按 1~2MB 分段读；若固定 4MB 分片，一段只有 1 片 → 等于单连接。
@@ -1054,9 +1054,10 @@ func defUserHint() string {
 
 // davGuard 给 WebDAV 端点套上登录校验，并让 /dav 与 /dav/ 两种写法都能直接用。
 // 两个坑：
-//   1. 之前 /dav/ 完全没走认证 —— 外网任何人拿到地址就能列目录、拉取夸克直链；
-//   2. ServeMux 只注册了 /dav/，客户端填 /dav（不带尾斜杠）会吃到 307，
-//      部分安卓/电视端 WebDAV 客户端不跟随 PROPFIND 的跳转，直接报"网络异常"。
+//  1. 之前 /dav/ 完全没走认证 —— 外网任何人拿到地址就能列目录、拉取夸克直链；
+//  2. ServeMux 只注册了 /dav/，客户端填 /dav（不带尾斜杠）会吃到 307，
+//     部分安卓/电视端 WebDAV 客户端不跟随 PROPFIND 的跳转，直接报"网络异常"。
+//
 // 无论客户端填哪种，这里都放行（自己播/播放器都兼容）。
 func davGuard(h http.Handler, store *Store, self string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1450,7 +1451,7 @@ func main() {
 		log.Fatalf("加载账号库失败: %v", err)
 	}
 	globalAccounts = as // 供各网盘 provider 取凭证
-	globalStore = store  // 供播放链路回写条目字段（如夸克转存后的 TVFID）
+	globalStore = store // 供播放链路回写条目字段（如夸克转存后的 TVFID）
 
 	// 全局播放设置（settings.json，与条目库同目录）
 	loadAppSettings(settingsPath(*flagData))

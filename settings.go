@@ -30,11 +30,24 @@ type AppSettings struct {
 	//   开 → /play 内部转 302、/direct 正常 302；
 	//   关 → /direct 内部转 /play（中转接手）、/play 走中转。
 	QuarkTV302 bool `json:"quark_tv_302"`
+
+	// QuarkTVOriginal 夸克 TV 302 的画质选项（2026-10-20 新增）：
+	//
+	//	false（默认）= 流畅优先：所有客户端都拿 TV 转码流（H.264 MP4，
+	//	        最高 1440x810）。实测 TV 原画直链单连接被 CDN 限速到
+	//	        ~100KB/s（0.8Mbps），1080p 片源要 5Mbps，差 6 倍必卡；
+	//	        转码流单连接 1-2MB/s，够 1080p 档流畅播放。
+	//	true = 画质优先：拿原画直链（2160p/H.265 原片）。仅建议局域网
+	//	        或高带宽环境用——公网/移动网络下单连接限速会卡。
+	//
+	// 注意：302 免认证直链不带会员身份，CDN 按匿名策略限速，88VIP/SVIP
+	// 在链里用不上（2026-10-20 实测，见备忘录 §23.56）。
+	QuarkTVOriginal bool `json:"quark_tv_original"`
 }
 
 var (
-	appSettingsMu sync.RWMutex
-	appSettings   = AppSettings{}
+	appSettingsMu   sync.RWMutex
+	appSettings     = AppSettings{}
 	appSettingsPath = "/data/settings.json"
 )
 
@@ -66,6 +79,14 @@ func quarkTV302Enabled() bool {
 	appSettingsMu.RLock()
 	defer appSettingsMu.RUnlock()
 	return appSettings.QuarkTV302
+}
+
+// quarkTVOriginalFirst 画质优先开关：true=原画，false（默认）=转码流。
+// 实测依据：原画直链单连接被限速 ~100KB/s，转码流 1-2MB/s（§23.56）。
+func quarkTVOriginalFirst() bool {
+	appSettingsMu.RLock()
+	defer appSettingsMu.RUnlock()
+	return appSettings.QuarkTVOriginal
 }
 
 // setQuarkTV302 改开关并落盘；返回改动后的值。
