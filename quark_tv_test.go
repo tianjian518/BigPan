@@ -224,3 +224,38 @@ func TestQtvExchangeTokenInvalidCodeMessage(t *testing.T) {
 		t.Fatalf("无效 code 应报 data.error_info，got %v", err)
 	}
 }
+
+// TestQtvStableDeviceIDReusesAccount 设备号复用逻辑（「设备数超限」事故的回归）：
+//  1. 无账号时生成稳定设备号并持久化（重读不变）；
+//  2. 有账号时优先复用账号里的设备号（重扫不占新名额）；
+//  3. 账号设备号被清空时回落到持久化设备号（老账号升级路径）。
+func TestQtvStableDeviceIDReusesAccount(t *testing.T) {
+	dir := t.TempDir()
+	as, err := NewAccountStore(filepath.Join(dir, "accounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id1 := qtvStableDeviceID(as)
+	if len(id1) != 32 {
+		t.Fatalf("设备号应为 32 位十六进制，得到 %q", id1)
+	}
+	if id2 := qtvStableDeviceID(as); id2 != id1 {
+		t.Fatalf("无账号时重读应得到同一设备号：%s != %s", id2, id1)
+	}
+	// 持久化文件确实写盘了（换个 AccountStore 实例读同一目录也要一样）
+	as2, _ := NewAccountStore(filepath.Join(dir, "accounts.json"))
+	if id3 := qtvStableDeviceID(as2); id3 != id1 {
+		t.Fatalf("重启后应读回同一设备号：%s != %s", id3, id1)
+	}
+
+	as.Put(Account{Provider: "quark_tv", Cookie: "rt", DeviceID: "acctdev00000000000000000000000001"})
+	if got := qtvStableDeviceID(as); got != "acctdev00000000000000000000000001" {
+		t.Fatalf("有账号时应复用账号设备号，得到 %q", got)
+	}
+
+	as.Put(Account{Provider: "quark_tv", Cookie: "rt", DeviceID: ""})
+	if got := qtvStableDeviceID(as); got != id1 {
+		t.Fatalf("账号设备号为空应回落到持久化设备号 %s，得到 %q", id1, got)
+	}
+}

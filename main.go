@@ -1485,7 +1485,7 @@ func main() {
 	mux.HandleFunc("/api/login/baidu/start", requireAuth(apiLoginStartBaidu))
 	mux.HandleFunc("/api/login/baidu/poll", requireAuth(apiLoginPollBaidu(as)))
 	// 夸克 TV 扫码登录（与夸克普通 Cookie 登录并存，同一 provider 两种登录方式）
-	mux.HandleFunc("/api/login/quark/start", requireAuth(apiLoginStartQuark))
+	mux.HandleFunc("/api/login/quark/start", requireAuth(apiLoginStartQuark(as)))
 	mux.HandleFunc("/api/login/quark/poll", requireAuth(apiLoginPollQuark(as)))
 	mux.HandleFunc("/api/quark/import", requireAuth(apiQuarkImport(as)))
 	mux.HandleFunc("/api/quark/list", requireAuth(apiQuarkList(as)))

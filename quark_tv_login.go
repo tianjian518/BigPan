@@ -12,6 +12,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -48,9 +51,15 @@ func qtvQRGC() {
 }
 
 // startQRQuarkTV 发起一次夸克 TV 扫码会话，后台自动轮询。
-func startQRQuarkTV() (*qtvQRSession, error) {
+//
+// 设备号复用策略（2026-10-20「设备数超限」事故的修复）：
+// 反复扫码如果每次都用随机新设备号，会把夸克账号的电视设备名额吃光，
+// 之后所有 TV 取链都报「设备数超限」。所以：
+//   - 已有 quark_tv 账号 → 复用账号里的设备号（重扫 = 刷新同一设备，不占新名额）；
+//   - 首次登录 → 生成一个持久化到数据目录的设备号（容器重启/重建都不变）。
+func startQRQuarkTV(as *AccountStore) (*qtvQRSession, error) {
 	qtvQRGC()
-	qtv := NewQuarkTV("", "", "")
+	qtv := NewQuarkTV(qtvStableDeviceID(as), "", "")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	qrData, queryToken, err := qtv.QRStart(ctx)
@@ -167,23 +176,44 @@ func pollQRQuarkTV(id string) (*qtvQRSnapshot, error) {
 	}, nil
 }
 
+// qtvStableDeviceID 取一个稳定的夸克 TV 设备号。
+// 优先复用已登录账号的设备号；没有账号时用数据目录里持久化的那个
+// （首次生成后写盘，之后重启/重扫/容器重建都读同一个，保证一个部署
+// 只占夸克账号一个电视设备名额）。
+func qtvStableDeviceID(as *AccountStore) string {
+	if a := as.Get("quark_tv"); a != nil && a.DeviceID != "" {
+		return a.DeviceID
+	}
+	p := filepath.Join(filepath.Dir(as.path), "qtv_device_id")
+	if b, err := os.ReadFile(p); err == nil {
+		if id := strings.TrimSpace(string(b)); len(id) == 32 {
+			return id
+		}
+	}
+	id := qtvGenDeviceID()
+	_ = os.WriteFile(p, []byte(id), 0600)
+	return id
+}
+
 // apiLoginStartQuark 开始扫码：POST /api/login/quark/start
-func apiLoginStartQuark(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func apiLoginStartQuark(as *AccountStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s, err := startQRQuarkTV(as)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]interface{}{
+			"ok":  true,
+			"sid": s.id,
+			"qr":  s.label,
+			"ttl": 300,
+		})
 	}
-	s, err := startQRQuarkTV()
-	if err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
-		return
-	}
-	writeJSON(w, map[string]interface{}{
-		"ok":  true,
-		"sid": s.id,
-		"qr":  s.label,
-		"ttl": 300,
-	})
 }
 
 // apiLoginPollQuark 轮询扫码状态：GET /api/login/quark/poll?sid=xxx
@@ -242,7 +272,15 @@ func quarkTVClient(as *AccountStore) *QuarkTV {
 	if a == nil || a.Cookie == "" { // Cookie 字段存的是 refresh_token
 		return nil
 	}
-	q := NewQuarkTV(a.DeviceID, a.AccessToken, a.Cookie)
+	// 老账号可能没有设备号字段：补一个稳定设备号并回写，避免每次重启
+	// 随机生成新设备号在夸克账号侧堆积名额（2026-10-20 事故的同款隐患）。
+	deviceID := a.DeviceID
+	if deviceID == "" {
+		deviceID = qtvStableDeviceID(as)
+		a.DeviceID = deviceID
+		as.Put(*a)
+	}
+	q := NewQuarkTV(deviceID, a.AccessToken, a.Cookie)
 	q.onRefresh = func(accessToken, refreshToken string) {
 		cur := as.Get("quark_tv")
 		if cur == nil {
