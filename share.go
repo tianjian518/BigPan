@@ -439,9 +439,12 @@ func buildItemDir(provider, category, showName, filePath string) string {
 	// 【2026-10-17 修潜伏 bug】safeFilename("") 返回「未命名」而非空串，
 	// 老的 `if c := safeFilename(...); c != ""` 对空 category 恒真 ——
 	// 用户导入不选分类就会莫名多出一层「未命名」目录。先判空再净化。
+	// 【2026-10-20 两级分类】category 可能是「父/子」，按段拼出多层目录。
 	if cat := strings.TrimSpace(category); cat != "" {
-		if c := safeFilename(cat); c != "" {
-			dir += "/" + c
+		for _, seg := range strings.Split(cat, "/") {
+			if seg = strings.TrimSpace(seg); seg != "" {
+				dir += "/" + safeFilename(seg)
+			}
 		}
 	}
 	show := safeFilename(stripScrape(strings.TrimSpace(showName)))
@@ -498,9 +501,13 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "没有要添加的文件"})
 			return
 		}
-		// 虚拟盘目录：{网盘中文名}/{分享（剧）名}/{分享内原目录}
 		// 虚拟盘目录统一由 buildItemDir 构造（分类/剧名/嵌套折叠都在里面）
-		category := strings.TrimSpace(req.Category)
+		// 分类支持两级「父/子」（如 电视剧/国产剧），在这里统一规范化
+		category, catErr := normalizeCategory(req.Category)
+		if catErr != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": catErr.Error()})
+			return
+		}
 		showNameRaw := strings.TrimSpace(req.Title)
 		showFinal := safeFilename(showNameRaw)
 		if showFinal == "" {
@@ -525,7 +532,7 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 			batch = append(batch, Item{
 				Title:    title,
 				Dir:      dir,
-				Category: safeFilename(category),
+				Category: category,
 				Show:     showFinal,
 				Provider: req.Provider,
 				ShareID:  req.PwdID,
@@ -550,7 +557,7 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 			}
 			globalShares.Put(ShareMeta{
 				Provider: req.Provider, ShareID: req.PwdID, Passcode: req.Passcode,
-				Category: safeFilename(strings.TrimSpace(req.Category)),
+				Category: category,
 				Show:     show,
 				AutoRefresh: ar,
 			})

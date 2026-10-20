@@ -96,6 +96,26 @@ h2{font-size:21px;font-weight:700;letter-spacing:.2px}
 /* 提示条：把散落各处的 inline style 提示收敛成统一组件 */
 .tips{margin:12px 0 0;padding:11px 14px;background:var(--pri2);border:1px solid #d6e2ff;border-radius:9px;font-size:13px;line-height:1.75;color:#33507a}
 .tips.warn{background:#fdf6ea;border-color:#f3ddb4;color:#8a5a12}
+/* 开关行：设置项统一排版——左文右开关，原理解释默认折叠，点开才看 */
+.swrow{display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid var(--line2)}
+.swrow:first-of-type{padding-top:10px}
+.swrow:last-child{border-bottom:none;padding-bottom:2px}
+.swmain{flex:1;min-width:0}
+.swt{font-size:14px;font-weight:600}
+.swd{color:var(--txt2);font-size:13px;line-height:1.65;margin-top:3px}
+.swmore{margin-top:6px}
+.swmore summary{color:var(--pri);font-size:12.5px;cursor:pointer;user-select:none;list-style:none;display:inline-block}
+.swmore summary::-webkit-details-marker{display:none}
+.swmore summary::before{content:'▸ '}
+.swmore[open] summary::before{content:'▾ '}
+.swmore>div{margin-top:7px;padding:10px 13px;background:#f6f8fc;border:1px solid var(--line);border-radius:9px;font-size:12.5px;line-height:1.8;color:var(--txt2)}
+/* iOS 风开关：label 包 input + i，点整行都能切 */
+.sw{position:relative;flex:none;display:inline-block;width:46px;height:26px;margin-top:1px;cursor:pointer}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw i{position:absolute;inset:0;background:#cbd5e1;border-radius:26px;transition:background .2s;pointer-events:none}
+.sw i::before{content:'';position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.28)}
+.sw input:checked+i{background:var(--pri)}
+.sw input:checked+i::before{transform:translateX(20px)}
 .tips b{color:inherit}
 /* 警示横幅（地址变了等需要用户注意的场景） */
 .banner{margin:12px 0 0;padding:12px 14px;background:var(--danger2);border:1px solid #f0c4cd;border-radius:9px;font-size:13.5px;line-height:1.75;color:#a12842}
@@ -381,30 +401,40 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <table id="accts" style="margin-top:10px"></table>
       </div>
       <div class="card">
-        <b style="font-size:14px">夸克播放模式<span class="cd">只影响夸克，其他网盘怎么走跟这里无关</span></b>
-        <div class="sub" style="margin:8px 0 0">夸克的分享直链绑着登录状态，播放器直接连会被拒，所以有两种走法，二选一：</div>
-        <table style="margin-top:8px">
-          <tr><td style="width:130px;color:var(--mut);vertical-align:top">走法</td><td>
-            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="quarkTV302" onchange="saveQuarkTV302()"> 开启「302 直连」</label><br>
-            <small style="color:var(--mut)">
-              <b>关闭</b>（默认）：数据经过本机转发。<b>家用盒子</b>用这个，省心，对账号名额也没要求。<br>
-              <b>开启</b>：播放器直连夸克服务器拉数据，<b>不经过本机、不耗服务器流量</b>。<b>云服务器部署必须开</b>（否则流量全走服务器）。<br>
-              开启的条件：上面「夸克网盘」<b>两种登录都连上</b>——Cookie 负责播放时把文件转存到临时目录，扫码负责取免认证直链，缺一个都放不了。<br>
-              切换<b>立即生效</b>：已经生成的 .strm 一个都不用重建，两种走法互相兼容。
-            </small>
-          </td></tr>
-        </table>
+        <b style="font-size:14px">播放走法<span class="cd">数据从网盘到播放器怎么走——家用盒子按默认来就行，云服务器部署才需要动</span></b>
+        <div class="swrow">
+          <div class="swmain">
+            <div class="swt">夸克 302 直连</div>
+            <div class="swd">开启后播放器自己连夸克服务器拉数据，<b>不经过本机、不耗服务器流量</b>；关闭则数据走本机转发，省心。切换立即生效，已生成的 .strm 不用重建。</div>
+            <details class="swmore"><summary>两种走法的区别 / 开启条件</summary>
+              <div>
+                <b>关闭</b>（默认）：数据经过本机转发。<b>家用盒子</b>用这个，省心，对账号名额也没要求。<br>
+                <b>开启</b>：播放器直连夸克服务器拉数据，<b>不经过本机、不耗服务器流量</b>。<b>云服务器部署必须开</b>（否则流量全走服务器）。<br>
+                开启的条件：上面「夸克网盘」<b>两种登录都连上</b>——Cookie 负责播放时把文件转存到临时目录，扫码负责取免认证直链，缺一个都放不了。<br>
+                切换<b>立即生效</b>：已经生成的 .strm 一个都不用重建，两种走法互相兼容。
+              </div>
+            </details>
+          </div>
+          <label class="sw"><input type="checkbox" id="quarkTV302" onchange="saveQuarkTV302()"><i></i></label>
+        </div>
+        <div class="swrow">
+          <div class="swmain">
+            <div class="swt">百度浏览器代取</div>
+            <div class="swd">默认关闭，保持纯 302、数据不过本机。开启后：在<b>浏览器</b>里直接点开百度分享的视频也能播放，但<b>这部分流量要经过本机</b>（服务器流量/带宽有上限的要留意）。飞牛影视 / Emby / Kodi 等媒体服务器<b>不受此开关影响</b>，始终走 302；其他网盘也不受影响。</div>
+          </div>
+          <label class="sw"><input type="checkbox" id="baiduRelay"><i></i></label>
+        </div>
+        <div class="sub" style="margin:10px 0 0;font-size:13px">夸克开关<b>立即生效</b>；百度开关随下面「保存并重建」一起生效。</div>
       </div>
       <div class="card">
         <b style="font-size:14px">播放器接入<span class="cd">把这两个地址填进对应的客户端，文件就开始流转了</span></b>
         <table style="margin-top:8px">
           <tr><td style="width:130px;color:var(--mut);vertical-align:top">WebDAV 挂载</td><td><code id="davUrl"></code><button class="gray copybtn" onclick="copyText('davUrl',this)" title="复制这个地址">复制</button><br><small style="color:var(--mut)">给爆米花 / rclone 等客户端挂载用：可列目录、可读文件</small></td></tr>
-          <tr><td style="color:var(--mut);vertical-align:top">STRM 播放端点</td><td><code id="directUrl"></code><button class="gray copybtn" onclick="copyText('directUrl',this)" title="复制这个地址">复制</button><br><small style="color:var(--mut)">给飞牛影视 / Emby 读 .strm 用：302 跳网盘直链。和 WebDAV 各有各的地址，互不影响</small></td></tr>
+          <tr><td style="color:var(--mut);vertical-align:top">STRM 播放端点</td><td><code id="directUrl"></code><button class="gray copybtn" onclick="copyText('directUrl',this)" title="复制这个地址">复制</button><br><small style="color:var(--mut)">给飞牛 / Emby 读 .strm 用：302 跳网盘直链</small></td></tr>
         </table>
       </div>
       <div class="card">
         <b style="font-size:14px">STRM 导出（媒体库用）<span class="cd">不用飞牛 / Emby 的话，这张卡可以完全不管</span></b>
-        <div class="sub" style="margin:8px 0 0">给飞牛影视 / Emby / Jellyfin 扫描的 .strm 目录。路径、对外地址、层级都按你自己的环境设，别人的配置和你无关。<br>STRM 走独立端点 <code>/direct</code>，和上面的 WebDAV 挂载各管各的：这里改目录 / 地址 / 层级只影响 .strm 文件，不会改变 WebDAV 挂载。</div>
         <table style="margin-top:8px">
           <tr><td style="width:130px;color:var(--mut);vertical-align:top">输出目录</td><td><input id="strmDir" placeholder="留空 = 启动参数 -strm" style="width:100%"><br><small style="color:var(--mut)">容器内路径；必须和 docker 挂载对应</small></td></tr>
           <tr><td style="color:var(--mut);vertical-align:top">对外地址</td><td><input id="strmBase" placeholder="留空 = 自动探测，如 http://192.168.1.10:8099" style="width:100%"><br><small style="color:var(--mut)">写进 .strm 的地址，客户端必须能访问到</small></td></tr>
@@ -416,12 +446,6 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
             </select>
           </td></tr>
           <tr><td style="color:var(--mut)">视频后缀</td><td><input id="strmExts" placeholder=".mp4,.mkv（留空 = 全部常见格式）" style="width:100%"></td></tr>
-          <tr><td style="color:var(--mut);vertical-align:top">百度浏览器代取</td><td>
-            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="baiduRelay"> 开启</label><br>
-            <small style="color:var(--mut)">默认<b>关闭</b>，保持纯 302、数据不过本机。<br>
-            开启后：在<b>浏览器</b>里直接点开百度分享的视频也能播放，但<b>这部分流量要经过本机</b>（服务器流量/带宽有上限的要留意）。<br>
-            飞牛影视 / Emby / Kodi 等媒体服务器<b>不受此开关影响</b>，始终走 302；其他网盘也不受影响。</small>
-          </td></tr>
         </table>
         <div id="strmStale" class="banner" style="display:none">
           <b>⚠️ 对外地址变了，存量 .strm 已失效</b><br>
@@ -432,10 +456,8 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
           <button class="gray" onclick="rebuildSTRM()">全量重建 STRM</button>
           <span class="sub" id="strmHint" style="margin-left:8px"></span>
         </div>
-        <div class="tips" style="margin:8px 0 0">
-          「保存并重建」：保存上面的设置，只补有变化的部分（地址没变时媒体库基本无感）。<br>
-          「全量重建 STRM」：<b>平时不用点</b>。只有对外地址变了——换了机器、域名或端口，上面弹出红色横幅时——才需要它：会把<b>所有</b> .strm 文件重写一遍（旧地址已失效，必须换），媒体库会据此重新刮削整个库，片子多时要等一阵，属正常现象。
-        </div>
+        <div class="sub" style="margin:8px 0 0;font-size:13px">.strm 是给飞牛 / Emby / Jellyfin 扫描的索引文件，指向上面「播放器接入」里的 STRM 端点；和 WebDAV 挂载各管各的，改这里不影响它。<br>
+        「保存并重建」只补有变化的部分，地址没变时媒体库基本无感；「全量重建」<b>平时别点</b>——只有对外地址变了（上面弹红色横幅）才需要：它会重写所有 .strm，媒体库跟着重新刮削全库，片子多时要等一阵，属正常现象。</div>
       </div>
     </div>
   </div>
@@ -455,11 +477,13 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
   <div class="mbox">
     <div class="mtitle" id="cmTitle"></div>
     <div class="mbody" style="white-space:normal">
-      <div style="margin-bottom:10px;color:var(--mut);font-size:12.5px">导入时分类选错了？在这里事后补救：选个新分类（或输个新名字），这部剧就整体归过去。</div>
+      <div style="margin-bottom:10px;color:var(--mut);font-size:12.5px">导入时分类选错了？在这里事后补救：选个新分类（或新建一级/二级），这部剧就整体归过去。</div>
       <div style="margin-bottom:10px">当前分类：<b id="cmCur" style="color:var(--txt)"></b></div>
       <div class="row" style="margin-bottom:12px">
-        <select id="cmSel" style="flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCmChange()"></select>
-        <input type="text" id="cmNew" placeholder="新分类名" style="display:none;flex:1;min-width:140px">
+        <select id="cmSel1" style="flex:1;min-width:150px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat1ChangeModal()"></select>
+        <select id="cmSel2" style="display:none;flex:1;min-width:150px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat2ChangeModal()"></select>
+        <input type="text" id="cmNew1" placeholder="一级分类名，如：电视剧" style="display:none;flex:1;min-width:130px">
+        <input type="text" id="cmNew2" placeholder="二级分类名，如：国产剧" style="display:none;flex:1;min-width:130px">
       </div>
       <div style="color:var(--mut);font-size:12.5px;line-height:1.7">改分类会把这个剧在媒体库里的位置搬过去（.strm 文件跟着搬家），已入库的剧集不受影响；以后追更出来的新剧集也归到新分类。片子多时媒体库会重新刮削这一部，属正常现象。</div>
     </div>
@@ -564,8 +588,10 @@ function loadHome(){
     var total=0, byPv={}, shows={};
     ITEMS.forEach(function(it){
       total+=(it.size||0);
+      // 统计「部」数：优先用入库时记录的 show 字段（两级分类下目录层数会变，
+      // 按 parts[1] 猜会把一级分类当剧名，少算）；老数据没有字段才按目录猜
       var parts=(it.dir||'未分类').split('/');
-      var pv=parts[0]||'未分类', show=parts[1]||'(根)';
+      var pv=parts[0]||'未分类', show=it.show||parts[1]||'(根)';
       byPv[pv]=(byPv[pv]||0)+1; shows[pv+'/'+show]=1;
     });
     var n=0;for(var s in shows){n++}
@@ -641,11 +667,13 @@ function doParse(){
       '<span class="tag '+(PVCLS[d.provider]||'')+'">'+esc(pvName)+'</span>共 '+d.files.length+' 个视频'+
       (d.logged?'':' <span style="color:var(--warn)">⚠ 未导入取流账号：能解析，但播放前要先在「设置」导入凭证</span>')+'</div>';
     h+='<div class="row" style="margin:0 0 10px"><span class="sub" style="margin:0;white-space:nowrap;font-weight:600;color:var(--txt)">分类：</span>'+
-      '<select id="catSel" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCatChange()"></select>'+
-      '<input type="text" id="catNew" placeholder="新分类名" style="display:none;flex:1;min-width:140px">'+
+      '<select id="catSel1" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat1Change()"></select>'+
+      '<select id="catSel2" style="display:none;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat2Change()"></select>'+
+      '<input type="text" id="catNew1" placeholder="一级分类名，如：电视剧" style="display:none;flex:1;min-width:130px">'+
+      '<input type="text" id="catNew2" placeholder="二级分类名，如：国产剧" style="display:none;flex:1;min-width:130px">'+
       '<span class="sub" style="margin:0;white-space:nowrap;font-weight:600;color:var(--txt)">剧名：</span>'+
       '<input type="text" id="showName" style="flex:1;min-width:200px" value="'+esc(d.title)+'"></div>'+
-      '<div class="tips" style="margin:0 0 10px">「分类」= 这部剧在媒体库里放的文件夹名（如「国产剧」），<b>选错了不慌</b>：导入后到分享列表点这行的「分类」随时能改。「剧名」会显示在媒体库和飞牛影视里，建议用完整片名。</div>';
+      '<div class="tips" style="margin:0 0 10px">「分类」= 这部剧在媒体库里放的文件夹名，支持两级：先选一级（如「电视剧」），再在它下面选或建二级（如「国产剧」）。<b>选错了不慌</b>：导入后到分享列表点这行的「分类」随时能改。「剧名」会显示在媒体库和飞牛影视里，建议用完整片名。</div>';
     h+='<table><thead><tr><th style="width:34px"><input type="checkbox" id="ckAll" checked onchange="toggleAll(this.checked)"></th><th>分享内路径</th><th style="width:110px;text-align:right">大小</th></tr></thead><tbody id="parseRows"></tbody></table>';
     h+='<div class="row" style="margin-top:12px"><button onclick="doAdd()">加入虚拟盘</button>'+
       '<span class="sub" style="margin:0" id="selN"></span>'+
@@ -657,23 +685,73 @@ function doParse(){
     fillCats(); // 必须在 innerHTML 之后调用 —— 那时下拉框才存在
   }).catch(function(e){$('parseOut').innerHTML='<div class="empty"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg></div><b>解析失败</b>网络错误：'+esc(e)+'</div>'});
 }
-function onCatChange(){
-  var v=$('catSel').value;
-  $('catNew').style.display=(v==='__new__'?'':'none');
-  if(v==='__new__')$('catNew').focus();
+function onCat1Change(){catSel1Change('catSel1','catSel2','catNew1','catNew2')}
+function onCat2Change(){catSel2Change('catSel2','catNew2')}
+// 分类两级树 {一级:{二级:1}}：来源 = 已导入条目 + 分享列表
+function catTree(){
+  var tree={};
+  function add(c){
+    c=(c||'').replace(/／/g,'/').trim();
+    if(!c)return;
+    var p,ch,i=c.indexOf('/');
+    if(i<0){p=c;ch='';}else{p=c.slice(0,i).trim();ch=c.slice(i+1).trim();}
+    if(!p)return;
+    if(!tree[p])tree[p]={};
+    if(ch)tree[p][ch]=1;
+  }
+  ITEMS.forEach(function(it){add(it.category)});
+  (CATLIST||[]).forEach(add);
+  return tree;
+}
+function ensureCatOpt(sel,val){
+  for(var i=0;i<sel.options.length;i++)if(sel.options[i].value===val)return;
+  var o=document.createElement('option');o.value=val;o.textContent=val;sel.appendChild(o);
+}
+// 填二级下拉：该一级下的现存二级 + 「新建二级」项
+function fillCat2(sel2Id,parent,curC){
+  var s=$(sel2Id);if(!s)return;
+  var subs=(catTree()[parent]||{});
+  var h='<option value="">（不分二级）</option>';
+  Object.keys(subs).sort().forEach(function(c){h+='<option value="'+escA(c)+'">'+esc(c)+'</option>'});
+  h+='<option value="__new2__">➕ 新建二级分类…</option>';
+  s.innerHTML=h;
+  if(curC)ensureCatOpt(s,curC);
+  s.value=curC||'';
+}
+// 填两级下拉并回显当前分类（cur 可能是 "一级" 或 "一级/二级"，允许是刚手输还没保存的新值）
+function fillCatSelects(i1,i2,n1,n2,cur){
+  var s1=$(i1);if(!s1)return;
+  var cp='',cc='';
+  cur=(cur||'').replace(/／/g,'/').trim();
+  if(cur){var i=cur.indexOf('/');if(i<0)cp=cur;else{cp=cur.slice(0,i).trim();cc=cur.slice(i+1).trim();}}
+  var h='<option value="">不分类（直接放剧名）</option>';
+  Object.keys(catTree()).sort().forEach(function(p){h+='<option value="'+escA(p)+'">'+esc(p)+'</option>'});
+  h+='<option value="__new1__">➕ 新建一级分类…</option>';
+  s1.innerHTML=h;
+  if(cp)ensureCatOpt(s1,cp);else s1.value='';
+  if(cp){ // 回显两级（新建中的一级没有二级可填，隐藏二级框）
+    $(i2).style.display=(cp==='__new1__'?'none':'');
+    if(cp!=='__new1__')fillCat2(i2,cp,cc);
+  }else{
+    $(i2).style.display='none';
+  }
+  $(n1).style.display=(s1.value==='__new1__'?'':'none');
+  if(n2)$(n2).style.display='none';
+}
+// 取当前选中的分类：两级下拉 + 新建输入框 → "一级/二级" 或 "一级" 或 ""
+function curCat(i1,i2,n1,n2){
+  var v1=$(i1).value;
+  if(v1==='__new1__')v1=($(n1).value||'').trim();
+  if(!v1)return '';
+  var v2=$(i2).value;
+  if(v2==='__new2__')v2=($(n2).value||'').trim();
+  if(!v2)return v1;
+  return v1+'/'+v2;
 }
 function fillCats(){
   loadItems(function(){
-    var s=$('catSel');if(!s)return;
-    var cur=s.value;
-    var set={};
-    ITEMS.forEach(function(it){if(it.category)set[it.category]=1});
-    var cats=Object.keys(set).sort();
-    var h='<option value="">不分类（直接放剧名）</option>';
-    for(var i=0;i<cats.length;i++){h+='<option value="'+esc(cats[i])+'">'+esc(cats[i])+'</option>'}
-    h+='<option value="__new__">➕ 新建分类…</option>';
-    s.innerHTML=h;
-    if(cur)s.value=cur;
+    if(!$('catSel1'))return;
+    fillCatSelects('catSel1','catSel2','catNew1','catNew2','');
   });
 }
 function toggleAll(v){
@@ -715,8 +793,7 @@ function updSel(){
 }
 function doAdd(){
   if(!PARSED)return;
-  var cat=$('catSel').value;
-  if(cat==='__new__')cat=$('catNew').value.trim();
+  var cat=curCat('catSel1','catSel2','catNew1','catNew2');
   var showName=$('showName')?$('showName').value.trim():'';
   if(!showName)showName=PARSED.title;
   var files=[];
@@ -844,32 +921,36 @@ function refreshShare(p,id,pwd){
     else toast(d.error||'刷新失败');
   });
 }
-// ---- 事后改分类 ----
+// ---- 事后改分类（两级：一级/二级联动下拉）----
 var CATLIST=[], CATM=null;
 function openCatModal(el){
   CATM={provider:el.getAttribute('data-p'),share_id:el.getAttribute('data-id'),show:el.getAttribute('data-show')||''};
   var cur=el.getAttribute('data-cur')||'';
   $('cmTitle').textContent='改分类：《'+(CATM.show||'')+'》';
   $('cmCur').textContent=cur||'不分类';
-  var s=$('cmSel');
-  var h='<option value="">不分类（直接放剧名）</option>';
-  for(var i=0;i<CATLIST.length;i++){h+='<option value="'+escA(CATLIST[i])+'">'+esc(CATLIST[i])+'</option>'}
-  h+='<option value="__new__">➕ 新建分类…</option>';
-  s.innerHTML=h;
-  s.value=(cur&&CATLIST.indexOf(cur)>=0)?cur:'';
-  $('cmNew').style.display='none';$('cmNew').value='';
+  fillCatSelects('cmSel1','cmSel2','cmNew1','cmNew2',cur);
   var m=$('catModal');m.style.display='flex';requestAnimationFrame(function(){m.classList.add('show')});
 }
 function closeCatModal(){var m=$('catModal');m.classList.remove('show');setTimeout(function(){m.style.display='none'},200);CATM=null}
-function onCmChange(){
-  var v=$('cmSel').value;
-  $('cmNew').style.display=(v==='__new__'?'':'none');
-  if(v==='__new__')$('cmNew').focus();
+// 弹窗里的一级/二级 onchange：与导入区同逻辑，只是 id 不同
+function onCat1ChangeModal(){catSel1Change('cmSel1','cmSel2','cmNew1','cmNew2')}
+function onCat2ChangeModal(){catSel2Change('cmSel2','cmNew2')}
+function catSel1Change(i1,i2,n1,n2){
+  var v=$(i1).value;
+  $(n1).style.display=(v==='__new1__'?'':'none');
+  $(n2).style.display='none';
+  if(v==='__new1__'){$(i2).style.display='none';$(n1).focus();}
+  else if(v){$(i2).style.display='';fillCat2(i2,v,'');}
+  else $(i2).style.display='none';
+}
+function catSel2Change(i2,n2){
+  var v=$(i2).value;
+  $(n2).style.display=(v==='__new2__'?'':'none');
+  if(v==='__new2__')$(n2).focus();
 }
 function doChangeCat(){
   if(!CATM)return;
-  var cat=$('cmSel').value;
-  if(cat==='__new__')cat=$('cmNew').value.trim();
+  var cat=curCat('cmSel1','cmSel2','cmNew1','cmNew2');
   var m=CATM;closeCatModal();
   toast('正在改分类…');
   fetch('/api/shares/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:m.provider,share_id:m.share_id,category:cat})})

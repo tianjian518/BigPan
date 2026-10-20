@@ -25,15 +25,31 @@ import (
 // 目录。这里按「剧名段」定位后缀（剧名及以后的分享内子目录），前面拼上网盘
 // 与新分类即可。老条目没有 Category 字段时，分类段按目录结构猜（Shares()
 // 也是这么猜的），找到剧名段后它前面的段自然被替换掉。
+//
+// 【2026-10-20 两级分类】旧分类可能是「父/子」两段，剥前缀要按段数全部剥掉；
+// 新分类同样按段拼（网盘/电视剧/国产剧/剧名）。一级分类的老逻辑不变。
 func itemDirWithCategory(it *Item, newCat string) string {
 	segs := strings.Split(strings.Trim(it.Dir, "/"), "/")
 	// ① 去掉网盘顶层（"百度" / "quark" 两种写法都兼容）
 	if len(segs) > 0 && (segs[0] == providerCN(it.Provider) || segs[0] == it.Provider) {
 		segs = segs[1:]
 	}
-	// ② 去掉旧分类段（与 Item.Category 对应；字段为空的老数据靠 ③ 跨过它）
-	if it.Category != "" && len(segs) > 0 && segs[0] == safeFilename(it.Category) {
-		segs = segs[1:]
+	// ② 去掉旧分类段（与 Item.Category 对应，按段匹配前缀全部剥掉；
+	// 老条目 Category 为空、或目录与字段对不上时，跳过让 ③ 按剧名兜底）
+	if it.Category != "" && len(segs) > 0 {
+		oldSegs := strings.Split(it.Category, "/")
+		if len(segs) >= len(oldSegs) {
+			match := true
+			for i, os := range oldSegs {
+				if segs[i] != safeFilename(strings.TrimSpace(os)) {
+					match = false
+					break
+				}
+			}
+			if match {
+				segs = segs[len(oldSegs):]
+			}
+		}
 	}
 	// ③ 从剧名段开始取后缀：分享内的子目录结构原样保留
 	show := safeFilename(stripScrape(it.Show))
@@ -50,9 +66,14 @@ func itemDirWithCategory(it *Item, newCat string) string {
 		suffix = show // 目录与字段对不上时保底：剧名这层不能丢
 	}
 	dir := providerCN(it.Provider)
-	// 与 buildItemDir 同一规矩：先判空再净化，空分类不套「未命名」
+	// 与 buildItemDir 同一规矩：先判空再净化，空分类不套「未命名」；
+	// 两级分类按段拼（电视剧/国产剧 → 两层目录）
 	if cat := strings.TrimSpace(newCat); cat != "" {
-		dir += "/" + safeFilename(cat)
+		for _, seg := range strings.Split(cat, "/") {
+			if seg = strings.TrimSpace(seg); seg != "" {
+				dir += "/" + safeFilename(seg)
+			}
+		}
 	}
 	return dir + "/" + suffix
 }
@@ -75,10 +96,11 @@ func apiShareCategory(store *Store, self string) http.HandlerFunc {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "参数错误"})
 			return
 		}
-		// 与导入同一规矩：空分类不套「未命名」，其余走 safeFilename 净化
-		newCat := ""
-		if strings.TrimSpace(req.Category) != "" {
-			newCat = safeFilename(strings.TrimSpace(req.Category))
+		// 与导入同一规矩：规范化（支持两级「父/子」），空分类不套「未命名」
+		newCat, catErr := normalizeCategory(req.Category)
+		if catErr != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": catErr.Error()})
+			return
 		}
 
 		items := store.List()
