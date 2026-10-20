@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -333,37 +334,44 @@ func (q *Quark) ShareTitle(pwdID, passcode string) string {
 	return out.Data.Title
 }
 
-// ShareList 列出分享中某个目录下的内容。
+// ShareList 列出分享中某个目录下的内容（自动翻页：单页 200，翻到不足一页为止）。
 func (q *Quark) ShareList(pwdID, stoken, pdirFID string) ([]QuarkFile, error) {
 	if pdirFID == "" {
 		pdirFID = quarkRootFID
 	}
-	var out struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Data    struct {
-			List []QuarkFile `json:"list"`
-		} `json:"data"`
+	var all []QuarkFile
+	for page := 1; page <= 50; page++ {
+		var out struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    struct {
+				List []QuarkFile `json:"list"`
+			} `json:"data"`
+		}
+		err := q.api(http.MethodGet, "/share/sharepage/detail", map[string]string{
+			"pwd_id":        pwdID,
+			"stoken":        stoken,
+			"pdir_fid":      pdirFID,
+			"force":         "0",
+			"_page":         strconv.Itoa(page),
+			"_size":         "200",
+			"_fetch_banner": "0",
+			"_fetch_share":  "0",
+			"_fetch_total":  "1",
+			"_sort":         "file_type:asc,updated_at:desc",
+		}, nil, &out)
+		if err != nil {
+			return nil, err
+		}
+		if out.Code != 0 {
+			return nil, fmt.Errorf("夸克分享：%s（code %d）", out.Message, out.Code)
+		}
+		all = append(all, out.Data.List...)
+		if len(out.Data.List) < 200 {
+			break
+		}
 	}
-	err := q.api(http.MethodGet, "/share/sharepage/detail", map[string]string{
-		"pwd_id":        pwdID,
-		"stoken":        stoken,
-		"pdir_fid":      pdirFID,
-		"force":         "0",
-		"_page":         "1",
-		"_size":         "200",
-		"_fetch_banner": "0",
-		"_fetch_share":  "0",
-		"_fetch_total":  "1",
-		"_sort":         "file_type:asc,updated_at:desc",
-	}, nil, &out)
-	if err != nil {
-		return nil, err
-	}
-	if out.Code != 0 {
-		return nil, fmt.Errorf("夸克分享：%s（code %d）", out.Message, out.Code)
-	}
-	return out.Data.List, nil
+	return all, nil
 }
 
 // ShareDownloadURL 取分享文件的直链 —— 关键：不转存，直接取。

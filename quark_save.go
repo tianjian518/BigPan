@@ -29,6 +29,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -170,14 +171,16 @@ func quarkSaveFile(q *Quark, pwdID, stoken, shareFID, shareFidToken, toPdirFID s
 			TaskID string `json:"task_id"`
 		} `json:"data"`
 	}
-	// __dt/__t 是夸克的风控参数（成熟实现都带），随机化更像真人操作
+	// __dt/__t 是夸克的风控参数（成熟实现都带），随机化更像真人操作。
+	// __t 必须是「浮点秒」（与网页端 datetime.now().timestamp() 同格式），
+	// 毫秒整数会被风控判定异常——格式照 Cp0204/quark-auto-save 复刻。
 	__dt := int64(rand.Intn(4*60*1000) + 60*1000)
-	__t := time.Now().UnixMilli()
+	__t := strconv.FormatFloat(float64(time.Now().UnixNano())/1e9, 'f', 3, 64)
 	params := map[string]string{
 		"pr": "ucpro", "fr": "pc", "uc_param_str": "",
 		"app":  "clouddrive",
 		"__dt": fmt.Sprintf("%d", __dt),
-		"__t":  fmt.Sprintf("%d", __t),
+		"__t":  __t,
 	}
 	err := q.api(http.MethodPost, "/share/sharepage/save", params, map[string]interface{}{
 		"fid_list":       []string{shareFID},
@@ -218,12 +221,13 @@ func quarkPollTask(q *Quark, taskID string) (string, error) {
 			} `json:"data"`
 		}
 		__dt := int64(rand.Intn(4*60*1000) + 60*1000)
+		__t := strconv.FormatFloat(float64(time.Now().UnixNano())/1e9, 'f', 3, 64)
 		params := map[string]string{
 			"pr": "ucpro", "fr": "pc", "uc_param_str": "",
 			"task_id":     taskID,
 			"retry_index": fmt.Sprintf("%d", retry),
 			"__dt":        fmt.Sprintf("%d", __dt),
-			"__t":         fmt.Sprintf("%d", time.Now().UnixMilli()),
+			"__t":         __t,
 		}
 		if err := q.api(http.MethodGet, "/task", params, nil, &out); err != nil {
 			return "", err
@@ -244,11 +248,10 @@ func quarkPollTask(q *Quark, taskID string) (string, error) {
 
 // quarkRefreshFidToken 重扫分享树找文件的 share_fid_token（转存令牌过期时刷新用）。
 // BFS 找到即返回，不展开全集；上限 200 个目录，防超大分享拖死。
-func quarkRefreshFidToken(q *Quark, item *Item) string {
-	st, err := q.ShareToken(item.ShareID, item.Passcode)
-	if err != nil {
-		return ""
-	}
+// quarkRefreshFidToken 重扫分享树补 share_fid_token（BFS，200 目录上限）。
+// st 由调用方传入（与转存同一个 stoken 会话）：share_fid_token 与 stoken
+// 是绑定的，混用不同会话的令牌会被夸克以 41020「token校验异常」拒掉。
+func quarkRefreshFidToken(q *Quark, item *Item, st string) string {
 	queue := []string{""}
 	seen := map[string]bool{"": true}
 	for len(queue) > 0 && len(seen) < 200 {
@@ -369,17 +372,24 @@ func quarkTransferForPlay(q *Quark, item *Item) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("分享已失效？%w", err)
 	}
+	// share_fid_token：转存必带。老条目（本字段上线前导入的）库里是空——
+	// 曾因「token != "" 才刷新」的守卫，空 token 直接转存必败且永远不刷新，
+	// 所有存量条目 302 播放全挂（2026-10-20 线上 41020 事故）。
+	// 现在：空 token 直接用同一个 stoken 会话重扫分享补令牌，失败也照样刷新重试。
 	token := item.FidToken
-	fid, err := quarkSaveFile(q, item.ShareID, st, item.FileID, token, pdir)
-	if err != nil && token != "" {
-		// share_fid_token 可能过期（老条目或分享重发过）：
-		// 重扫分享刷新一次令牌再重试，刷新结果回写库，下次不用再扫。
-		if nt := quarkRefreshFidToken(q, item); nt != "" && nt != token {
+	var fid string
+	if token != "" {
+		fid, err = quarkSaveFile(q, item.ShareID, st, item.FileID, token, pdir)
+	}
+	if err != nil || token == "" {
+		if nt := quarkRefreshFidToken(q, item, st); nt != "" && nt != token {
 			log.Printf("[quark-tv] 分享令牌已刷新，重试转存 %s", fileName)
 			token = nt
 			item.FidToken = nt
 			quarkRememberFidToken(item.ID, nt)
 			fid, err = quarkSaveFile(q, item.ShareID, st, item.FileID, token, pdir)
+		} else if err == nil {
+			err = fmt.Errorf("分享里没找到这个文件（可能已被分享者删除）")
 		}
 	}
 	if err != nil {
