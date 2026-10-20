@@ -259,3 +259,124 @@ func TestQtvStableDeviceIDReusesAccount(t *testing.T) {
 		t.Fatalf("账号设备号为空应回落到持久化设备号 %s，得到 %q", id1, got)
 	}
 }
+
+// pointAPIBase 把 TV 开放接口域名指到 httptest（qtvAPIBase 因此是 var）。
+func pointAPIBase(t *testing.T, url string) {
+	t.Helper()
+	old := qtvAPIBase
+	qtvAPIBase = url
+	t.Cleanup(func() { qtvAPIBase = old })
+}
+
+// TestQtvStreamingURLPicksBestResolution 网页播放走转码流：video_info 可能带
+// 多档分辨率，必须取像素总数最大的一档（浏览器放不了低清糊画面）。
+func TestQtvStreamingURLPicksBestResolution(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/file" {
+			t.Errorf("路径应为 /file，got %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("method") != "streaming" {
+			t.Errorf("转码流应带 method=streaming，got %q", r.URL.Query().Get("method"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"status": 200, "errno": 0,
+			"data": map[string]any{
+				"default_resolution": "normal",
+				"video_info": []map[string]any{
+					{"resolution": "low", "width": 640, "height": 360, "size": 50000000, "url": "https://cdn.example/low.mp4"},
+					{"resolution": "super", "width": 1920, "height": 1080, "size": 254822837, "url": "https://cdn.example/super.mp4"},
+					{"resolution": "high", "width": 1280, "height": 720, "size": 120000000, "url": "https://cdn.example/high.mp4"},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+	pointAPIBase(t, srv.URL)
+
+	q := NewQuarkTV("dev-1", "at-1", "")
+	u, err := q.StreamingURL(context.Background(), "fid-x")
+	if err != nil {
+		t.Fatalf("取转码流应成功，got %v", err)
+	}
+	if u != "https://cdn.example/super.mp4" {
+		t.Fatalf("应取分辨率最高的一档（super 1080p），got %q", u)
+	}
+}
+
+// TestQtvPickURLWebPrefersStreaming 网页模式取链策略：
+//  1. web=true 且转码流可用 → 转码流（浏览器可解的 H.264 MP4）；
+//  2. web=true 但转码流没有 → 回落原画（万一片源本身就是 MP4/H.264）；
+//  3. web=false（原生播放器）→ 原画，清晰度优先。
+func TestQtvPickURLWebPrefersStreaming(t *testing.T) {
+	fileH := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("method") == "streaming" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"status": 200, "errno": 0,
+				"data": map[string]any{"video_info": []map[string]any{
+					{"resolution": "super", "width": 1920, "height": 1080, "url": "https://cdn.example/stream.mp4"},
+				}},
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"status": 200, "errno": 0,
+			"data": map[string]any{"download_url": "https://cdn.example/origin.mkv"},
+		})
+	}
+
+	t.Run("网页模式取转码流", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(fileH))
+		defer srv.Close()
+		pointAPIBase(t, srv.URL)
+		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid", true)
+		if err != nil || u != "https://cdn.example/stream.mp4" {
+			t.Fatalf("网页模式应取转码流，got %q err=%v", u, err)
+		}
+	})
+
+	t.Run("转码流缺失回落原画", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Query().Get("method") == "streaming" {
+				// 夸克对没转码的文件回错误（如「不支持转码」）
+				json.NewEncoder(w).Encode(map[string]any{"status": -1, "errno": 32010, "error_info": "文件不支持转码"})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"status": 200, "errno": 0,
+				"data": map[string]any{"download_url": "https://cdn.example/origin.mkv"},
+			})
+		}))
+		defer srv.Close()
+		pointAPIBase(t, srv.URL)
+		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid", true)
+		if err != nil || u != "https://cdn.example/origin.mkv" {
+			t.Fatalf("转码流失败应回落原画，got %q err=%v", u, err)
+		}
+	})
+
+	t.Run("原生播放器只取原画", func(t *testing.T) {
+		var sawStreaming bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("method") == "streaming" {
+				sawStreaming = true
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"status": 200, "errno": 0,
+				"data": map[string]any{"download_url": "https://cdn.example/origin.mkv"},
+			})
+		}))
+		defer srv.Close()
+		pointAPIBase(t, srv.URL)
+		u, err := qtvPickURL(context.Background(), NewQuarkTV("dev-1", "at-1", ""), "fid", false)
+		if err != nil || u != "https://cdn.example/origin.mkv" {
+			t.Fatalf("原生播放器应取原画，got %q err=%v", u, err)
+		}
+		if sawStreaming {
+			t.Fatal("原生播放器不应打转码流接口（浪费一次 API 调用）")
+		}
+	})
+}

@@ -305,6 +305,15 @@ func quarkDeleteOwn(q *Quark, fid string) error {
 // quarkTVPlayTarget 开关打开时的夸克取链：转存（或复用）→ TV 免认证直链。
 // 返回的 PlayTarget UA/Cookie 全空——TV 直链不绑会话，客户端直连 CDN 即可。
 func quarkTVPlayTarget(item *Item) (PlayTarget, error) {
+	return quarkTVPlayTargetMode(item, false)
+}
+
+// quarkTVPlayTargetMode 同 quarkTVPlayTarget，web=true 时优先取 TV 转码流
+// （H.264 MP4）：浏览器解不开 MKV/H.265 原画（备忘录 §23.30），而 TV 接口的
+// streaming 转码流恰好是浏览器可解的格式，且同样是免认证 CDN 直链——
+// 302 之后数据照样不经过本机。转码流拿不到时回落原画（万一片源本身就是
+// MP4/H.264，浏览器直接就能播）。
+func quarkTVPlayTargetMode(item *Item, web bool) (PlayTarget, error) {
 	// ① TV 扫码凭证（取免认证直链用）
 	qtv := quarkTVClient(globalAccounts)
 	if qtv == nil {
@@ -331,7 +340,7 @@ func quarkTVPlayTarget(item *Item) (PlayTarget, error) {
 	}
 	// ⑤ TV 接口取免认证直链（token 失效自动刷新重试在 qtvFileLink 内处理）
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	u, err := qtv.DownloadURL(ctx, fid)
+	u, err := qtvPickURL(ctx, qtv, fid, web)
 	cancel()
 	if err != nil {
 		// 自愈：转存文件可能已被 sweeper 清掉（TVFID 失效）→ 丢掉记录重转存一次。
@@ -343,7 +352,7 @@ func quarkTVPlayTarget(item *Item) (PlayTarget, error) {
 			return PlayTarget{}, err2
 		}
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-		u, err = qtv.DownloadURL(ctx2, fid2)
+		u, err = qtvPickURL(ctx2, qtv, fid2, web)
 		cancel2()
 		if err != nil {
 			return PlayTarget{}, err
@@ -351,6 +360,20 @@ func quarkTVPlayTarget(item *Item) (PlayTarget, error) {
 		quarkRememberTVFID(item.ID, fid2)
 	}
 	return PlayTarget{URL: u, UA: "", Cookie: ""}, nil
+}
+
+// qtvPickURL 按客户端类型取 TV 直链：
+//   - web=true（浏览器）：优先转码流（H.264 MP4，浏览器可解），失败回落原画；
+//   - web=false（飞牛/Emby/Infuse 等原生播放器）：只要原画，清晰度优先。
+func qtvPickURL(ctx context.Context, qtv *QuarkTV, fid string, web bool) (string, error) {
+	if web {
+		u, err := qtv.StreamingURL(ctx, fid)
+		if err == nil {
+			return u, nil
+		}
+		log.Printf("[quark-tv] 转码流不可用（%v），回落原画直链", err)
+	}
+	return qtv.DownloadURL(ctx, fid)
 }
 
 // quarkTransferForPlay 播放前的转存：确保临时目录 → 查重复用 → 没有才转存。

@@ -613,7 +613,25 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 	// 客户端直连网盘 CDN，数据不经过本机（存量 /play .strm 的兼容路——
 	// 开关关着时生成的 /play 地址，开关打开后照样能播）。
 	if it != nil && strings.EqualFold(it.Provider, "quark") && quarkTV302Enabled() {
-		u, uerr := resolveDirectURL(it)
+		// 浏览器（含项目自带的网页播放器）解不开 MKV/H.265 原画（备忘录
+		// §23.30）：UA 是浏览器时改取 TV 转码流（H.264 MP4，仍是免认证
+		// CDN 直链，302 后数据不经过本机）。原生播放器（飞牛/Emby/Infuse，
+		// isBrowserUA 已排除）照旧拿原画，清晰度优先。
+		var u string
+		var uerr error
+		if isBrowserUA(r.Header.Get("User-Agent")) {
+			var pt PlayTarget
+			pt, uerr = quarkTVPlayTargetMode(it, true)
+			u = pt.URL
+			if uerr == nil {
+				log.Printf("  [直链] %s → 302 跳转（夸克 TV 网页转码流，数据不经过本机）", it.FileName())
+			}
+		} else {
+			u, uerr = resolveDirectURL(it)
+			if uerr == nil {
+				log.Printf("  [直链] %s → 302 跳转（夸克 TV 原画，数据不经过本机）", it.FileName())
+			}
+		}
 		if uerr != nil {
 			if it.IsShare() {
 				log.Printf("  [%s] 取流失败: %v", it.Provider, uerr)
@@ -624,7 +642,6 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 		// 禁止缓存 302 目标：直链几秒~几分钟内过期，缓存后第二次播放拿死链。
 		w.Header().Set("Cache-Control", "no-store, max-age=0")
 		w.Header().Set("Pragma", "no-cache")
-		log.Printf("  [直链] %s → 302 跳转（夸克 TV，数据不经过本机）", it.FileName())
 		http.Redirect(w, r, u, http.StatusFound)
 		return
 	}

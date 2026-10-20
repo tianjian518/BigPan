@@ -32,8 +32,6 @@ import (
 )
 
 const (
-	// qtvAPIBase TV 开放接口域名（QuarkTV；UC TV 变体是 open-api-drive.uc.cn，暂不接）。
-	qtvAPIBase = "https://open-api-drive.quark.cn"
 	// qtvClientID / qtvSignKey TV 端 App 的客户端标识与签名密钥（驱动源码常量）。
 	qtvClientID = "d3194e61504e493eb6222857bccfed94"
 	qtvSignKey  = "kw2dvtd7p4t3pjl2d9ed9yc8yej8kw2d"
@@ -42,6 +40,10 @@ const (
 	// qtvUA 伪装成小米电视（驱动源码同款；只用于 TV 接口请求，直链本身不校验 UA）。
 	qtvUA = "Mozilla/5.0 (Linux; U; Android 13; zh-cn; M2004J7AC Build/UKQ1.231108.001) AppleWebKit/533.1 (KHTML, like Gecko) Mobile Safari/533.1"
 )
+
+// qtvAPIBase TV 开放接口域名（QuarkTV；UC TV 变体是 open-api-drive.uc.cn，暂不接）。
+// 声明成 var 而非 const：单测里要指向 httptest 服务器（同 qtvCodeAPI）。
+var qtvAPIBase = "https://open-api-drive.quark.cn"
 
 // qtvCodeAPI 扫码登录换 token 的域名（驱动同款：api.extscreen.com/quarkdrive）。
 // 声明成 var 而非 const：单测里要指向 httptest 服务器。
@@ -347,6 +349,8 @@ type qtvFileResp struct {
 		VideoInfo   []struct {
 			Resolution string  `json:"resolution"`
 			URL        string  `json:"url"`
+			Width      int     `json:"width"`
+			Height     int     `json:"height"`
 			Size       int64   `json:"size"`
 			Bitrate    float64 `json:"bitrate"`
 		} `json:"video_info"`
@@ -407,15 +411,26 @@ func (q *QuarkTV) DownloadURL(ctx context.Context, fid string) (string, error) {
 }
 
 // StreamingURL 取转码流直链（TV App 同款，弱网更快但清晰度降档）。
+// 返回的是 H.264 MP4——浏览器解不开 MKV/H.265 原画（备忘录 §23.30），
+// 网页播放就靠它（见 handlePlay 的浏览器分支）。
+// video_info 可能带多档分辨率，取像素总数最大的一档。
 func (q *QuarkTV) StreamingURL(ctx context.Context, fid string) (string, error) {
 	out, err := q.qtvFileLink(ctx, "streaming", fid)
 	if err != nil {
 		return "", err
 	}
+	best, bestPx := "", int64(-1)
 	for _, vi := range out.Data.VideoInfo {
-		if vi.URL != "" {
-			return vi.URL, nil
+		if vi.URL == "" {
+			continue
+		}
+		px := int64(vi.Width) * int64(vi.Height)
+		if px > bestPx {
+			best, bestPx = vi.URL, px
 		}
 	}
-	return "", fmt.Errorf("夸克TV未返回转码流地址")
+	if best == "" {
+		return "", fmt.Errorf("夸克TV未返回转码流地址")
+	}
+	return best, nil
 }
