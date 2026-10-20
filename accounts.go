@@ -128,6 +128,7 @@ func retireOldAccount(old Account) {
 	if old.Provider == "quark" || old.Provider == "quark_tv" {
 		quarkTmpDirReset()
 		quarkTempReset()
+		quarkFailCacheReset()
 	}
 	if old.Provider == "baidu" && old.Cookie != "" {
 		go func(ck, label string) {

@@ -213,6 +213,13 @@ func scanQuarkShare(pwdID, passcode string) (title string, files []ShareFile, er
 		}
 	}
 	if len(files) == 0 {
+		// 分享被审核屏蔽是「链接还在、内容没了」的第三种状态：ShareToken
+		// 照常成功、BFS 列表全空，只有 detail 元数据里的 partial_violation
+		// 能识别（2026-10-20 美人余事故：12 个文件违规下架，巡检漏判）。
+		// 拿不到元数据按非屏蔽处理——宁可漏判，不可误判。
+		if meta, serr := q.ShareStatus(pwdID, stoken); serr == nil && meta.Blocked() {
+			return title, nil, fmt.Errorf("分享内容被网盘审核屏蔽（%d 个文件违规下架），请更换分享源或删除该条目", meta.ViolationCnt)
+		}
 		return title, nil, fmt.Errorf("这个分享里没有找到视频文件")
 	}
 	return title, files, nil

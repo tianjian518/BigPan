@@ -210,8 +210,8 @@ func quarkPollTask(q *Quark, taskID string) (string, error) {
 	retry := 0
 	for {
 		var out struct {
-			Status int    `json:"status"`
-			Code   int    `json:"code"`
+			Status int `json:"status"`
+			Code   int `json:"code"`
 			Data   struct {
 				Status    int    `json:"status"` // 2 = 完成
 				TaskTitle string `json:"task_title"`
@@ -376,9 +376,72 @@ func qtvPickURL(ctx context.Context, qtv *QuarkTV, fid string, web bool) (string
 	return qtv.DownloadURL(ctx, fid)
 }
 
+// ---- 分享级失败缓存（防播放器无限重试风暴）----
+//
+// 爆米花等播放器对失败条目会疯狂重试（2026-10-20 实测 2 分钟 88 次），
+// 每次都全量走转存流程：查重 → ShareToken → BFS 整棵分享树。分享级失败
+// （分享失效 / 被审核屏蔽）短时间内不会自愈，缓存 TTL 内直接返回上次的
+// 错误：既止住日志风暴，也避免高频失败请求触发夸克风控。
+//
+// 只缓存「分享级」失败；转存/取链的临时性错误（限流、任务超时等）不缓存，
+// 恢复后要能立刻重试。条目转存成功即清缓存。
+var (
+	quarkFailMu    sync.Mutex
+	quarkFailCache = map[string]quarkFailEntry{}
+	quarkFailTTL   = 10 * time.Minute
+)
+
+type quarkFailEntry struct {
+	err error
+	at  time.Time
+}
+
+func quarkFailKey(shareID, fileID string) string { return shareID + "|" + fileID }
+
+// quarkFailCached 取缓存的分享级失败（过期自动清除）。
+func quarkFailCached(shareID, fileID string) (error, bool) {
+	quarkFailMu.Lock()
+	defer quarkFailMu.Unlock()
+	e, ok := quarkFailCache[quarkFailKey(shareID, fileID)]
+	if !ok {
+		return nil, false
+	}
+	if time.Since(e.at) > quarkFailTTL {
+		delete(quarkFailCache, quarkFailKey(shareID, fileID))
+		return nil, false
+	}
+	return e.err, true
+}
+
+// quarkFailRemember 记一个分享级失败（调用方需确保 err 是分享级、非临时性）。
+func quarkFailRemember(shareID, fileID string, err error) {
+	quarkFailMu.Lock()
+	quarkFailCache[quarkFailKey(shareID, fileID)] = quarkFailEntry{err: err, at: time.Now()}
+	quarkFailMu.Unlock()
+}
+
+// quarkFailClear 清掉缓存（转存成功时调：分享级状态已自愈或本条已跳过）。
+func quarkFailClear(shareID, fileID string) {
+	quarkFailMu.Lock()
+	delete(quarkFailCache, quarkFailKey(shareID, fileID))
+	quarkFailMu.Unlock()
+}
+
+// quarkFailCacheReset 清空全部缓存（账号切换时调：新号的分享状态不同）。
+func quarkFailCacheReset() {
+	quarkFailMu.Lock()
+	quarkFailCache = map[string]quarkFailEntry{}
+	quarkFailMu.Unlock()
+}
+
 // quarkTransferForPlay 播放前的转存：确保临时目录 → 查重复用 → 没有才转存。
 // 返回自己盘上的 fid。
 func quarkTransferForPlay(q *Quark, item *Item) (string, error) {
+	// 分享级失败缓存：命中则直接返回上次错误，不打任何夸克 API。
+	if ferr, ok := quarkFailCached(item.ShareID, item.FileID); ok {
+		log.Printf("[quark-tv] 失败缓存命中（%v 内不重试）%s: %v", quarkFailTTL, item.Title+item.Ext, ferr)
+		return "", ferr
+	}
 	pdir := quarkTmpDirFID(q)
 	if pdir == "" {
 		return "", fmt.Errorf("夸克临时目录（%s）创建失败，稍后再试", quarkTmpDir)
@@ -393,7 +456,10 @@ func quarkTransferForPlay(q *Quark, item *Item) (string, error) {
 	// stoken：游客态即可拿（ShareToken 不需要登录）
 	st, err := q.ShareToken(item.ShareID, item.Passcode)
 	if err != nil {
-		return "", fmt.Errorf("分享已失效？%w", err)
+		// ShareToken 失败 = 分享级（链接失效/提取码错），缓存。
+		ferr := fmt.Errorf("分享已失效？%w", err)
+		quarkFailRemember(item.ShareID, item.FileID, ferr)
+		return "", ferr
 	}
 	// share_fid_token：转存必带。老条目（本字段上线前导入的）库里是空——
 	// 曾因「token != "" 才刷新」的守卫，空 token 直接转存必败且永远不刷新，
@@ -412,13 +478,21 @@ func quarkTransferForPlay(q *Quark, item *Item) (string, error) {
 			quarkRememberFidToken(item.ID, nt)
 			fid, err = quarkSaveFile(q, item.ShareID, st, item.FileID, token, pdir)
 		} else if err == nil {
-			err = fmt.Errorf("分享里没找到这个文件（可能已被分享者删除）")
+			// 两种「没找到」要分开说：审核屏蔽（元数据实锤）vs 真被删（猜）。
+			// 屏蔽是持久状态，记失败缓存，止住播放器无限重试。
+			if meta, serr := q.ShareStatus(item.ShareID, st); serr == nil && meta.Blocked() {
+				err = fmt.Errorf("分享内容被夸克审核屏蔽（%d 个文件违规下架），请更换分享源或删除该条目", meta.ViolationCnt)
+			} else {
+				err = fmt.Errorf("分享里没找到这个文件（可能已被分享者删除）")
+			}
+			quarkFailRemember(item.ShareID, item.FileID, err)
 		}
 	}
 	if err != nil {
 		return "", err
 	}
-	quarkRecordTemp(fid) // 记账：sweeper 按 2 小时 TTL 清，连看会续期
+	quarkFailClear(item.ShareID, item.FileID) // 转存成功：分享是活的，清失败缓存
+	quarkRecordTemp(fid)                      // 记账：sweeper 按 2 小时 TTL 清，连看会续期
 	log.Printf("[quark-tv] 已转存 %s → fid=%s", fileName, fid)
 	return fid, nil
 }

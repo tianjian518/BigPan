@@ -25,10 +25,31 @@ import (
 
 const (
 	uaQuark      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.12 Safari/537.36"
-	quarkAPIBase = "https://drive-pc.quark.cn/1/clouddrive"
 	quarkReferer = "https://pan.quark.cn/"
 	quarkRootFID = "0"
 )
+
+// quarkAPIBase 提成 var：单测要把接口指到 httptest 假服务器（同百度套路）。
+var quarkAPIBase = "https://drive-pc.quark.cn/1/clouddrive"
+
+// QuarkShareMeta 分享页详情接口返回的分享级元数据（data.share）。
+// 关键用途：识别「分享还在、内容被审核屏蔽」这一第三种状态——
+// partial_violation=true 且 violation_cnt>0 时文件被批量下架，列目录必然
+// 为空，播放/追更全失败，但 ShareToken 照常成功（链接没过期），
+// 老逻辑只会报「没有找到视频文件」，漏判（2026-10-20 美人余事故）。
+type QuarkShareMeta struct {
+	Title            string `json:"title"`
+	Status           int    `json:"status"`
+	PartialViolation bool   `json:"partial_violation"`
+	ViolationCnt     int    `json:"violation_cnt"`
+	FileNum          int    `json:"file_num"`
+	AllFileNum       int    `json:"all_file_num"`
+}
+
+// Blocked 分享内容是否被审核屏蔽下架。
+func (m QuarkShareMeta) Blocked() bool {
+	return m.PartialViolation && m.ViolationCnt > 0
+}
 
 // QuarkFile 夸克网盘里的一个文件或目录。
 type QuarkFile struct {
@@ -372,6 +393,39 @@ func (q *Quark) ShareList(pwdID, stoken, pdirFID string) ([]QuarkFile, error) {
 		}
 	}
 	return all, nil
+}
+
+// ShareStatus 取分享级元数据（只打第一页 detail，文件列表丢弃）。
+// 用于识别「分享被审核屏蔽」：ShareToken 对屏蔽分享照常成功，只有 detail
+// 里的 partial_violation/violation_cnt 能看出内容已被下架。
+// 注意：拿不到元数据时返回 error，调用方必须按「非屏蔽」处理——宁可漏判，
+// 不可误判（health.go 的防误删逻辑同款思路）。
+func (q *Quark) ShareStatus(pwdID, stoken string) (QuarkShareMeta, error) {
+	var out struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Share QuarkShareMeta `json:"share"`
+		} `json:"data"`
+	}
+	err := q.api(http.MethodGet, "/share/sharepage/detail", map[string]string{
+		"pwd_id":        pwdID,
+		"stoken":        stoken,
+		"pdir_fid":      quarkRootFID,
+		"force":         "0",
+		"_page":         "1",
+		"_size":         "1",
+		"_fetch_banner": "0",
+		"_fetch_share":  "1",
+		"_fetch_total":  "0",
+	}, nil, &out)
+	if err != nil {
+		return QuarkShareMeta{}, err
+	}
+	if out.Code != 0 {
+		return QuarkShareMeta{}, fmt.Errorf("夸克分享：%s（code %d）", out.Message, out.Code)
+	}
+	return out.Data.Share, nil
 }
 
 // ShareDownloadURL 取分享文件的直链 —— 关键：不转存，直接取。
