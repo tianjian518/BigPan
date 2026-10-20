@@ -128,9 +128,9 @@ h2{font-size:21px;font-weight:700;letter-spacing:.2px}
 .sp{flex:1}
 .stat{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
 .stat .card{flex:1;min-width:140px;margin:0;padding:20px 14px 18px;text-align:center;cursor:default}
-.stat b{font-size:26px;font-weight:700;color:var(--pri);font-variant-numeric:tabular-nums;display:block;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* 标签做成浅蓝底胶囊：比裸灰字醒目，8 张卡并排时一眼能读 */
-.stat span{display:inline-block;color:#3d4a63;font-size:13px;font-weight:500;margin-top:9px;padding:3px 12px;border-radius:20px;background:#f1f6fd;border:1px solid #dfe9f7;line-height:1.5}
+.stat b{font-size:28px;font-weight:700;color:var(--pri);font-variant-numeric:tabular-nums;display:block;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 标签做成浅蓝底胶囊：蓝字加粗，比裸灰字醒目 */
+.stat span{display:inline-block;color:var(--pri);font-size:14px;font-weight:600;margin-top:10px;padding:4px 15px;border-radius:20px;background:#e8f1ff;border:1px solid #c9dcf9;line-height:1.5;letter-spacing:.2px}
 .stat span.plain{display:block;background:none;border:0;padding:0}
 .stat .si{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin:0 auto 10px}
 .stat .si svg{width:18px;height:18px;stroke:currentColor}
@@ -514,6 +514,18 @@ var PARSELIMIT=8, PARSESHOWALL=false, SELMAP=[];
 var PVCN={quark:'夸克网盘','115':'115网盘',mobile139:'移动云盘',tianyi:'天翼云盘',baidu:'百度网盘'};
 // 列表/概览里的短名：「夸克/电视剧/国产剧」比「夸克网盘/…」清爽
 var PVSHORT={quark:'夸克','115':'115',mobile139:'移动',tianyi:'天翼',baidu:'百度'};
+// 网盘名统一成短名：目录名可能是「夸克」「115网盘」「mobile139」等各种写法，
+// 显示层一律收敛成 夸克/115/移动/天翼/百度（不动已有目录名，避免目录裂开）
+function pvLabel(name){
+  name=String(name||'');
+  if(name in PVSHORT)return PVSHORT[name];
+  if(name.indexOf('夸克')>=0)return '夸克';
+  if(name.indexOf('115')>=0)return '115';
+  if(name.indexOf('移动')>=0)return '移动';
+  if(name.indexOf('天翼')>=0)return '天翼';
+  if(name.indexOf('百度')>=0)return '百度';
+  return name;
+}
 var PVCLS={quark:'q','115':'n',mobile139:'m',tianyi:'t',baidu:'b'};
 var VIDEO_EXTS=/\.(mkv|mp4|ts|avi|mov|wmv|flv|webm|rmvb|iso|m2ts)$/i;
 function $(x){return document.getElementById(x)}
@@ -602,7 +614,7 @@ function loadHome(){
     var h='<div class="card"><div class="si b">'+ICO.film+'</div><b>'+ITEMS.length+'</b><span>个文件</span></div>';
     h+='<div class="card"><div class="si o">'+ICO.layers+'</div><b>'+n+'</b><span>部影片/剧集</span></div>';
     h+='<div class="card"><div class="si p">'+ICO.db+'</div><b>'+humanSize(total)+'</b><span>总容量</span></div>';
-    for(var p in byPv){h+='<div class="card"><div class="si g">'+ICO.db+'</div><b>'+byPv[p]+'</b><span>'+esc(PVSHORT[p]||p)+'</span></div>'}
+    for(var p in byPv){h+='<div class="card"><div class="si g">'+ICO.db+'</div><b>'+byPv[p]+'</b><span>'+esc(pvLabel(p))+'</span></div>'}
     $('stats').innerHTML=h;
     fetch('/api/shares').then(function(r){return r.json()}).then(function(d){
       var arr=(d.shares||[]).filter(function(s){return s.auto_refresh});
@@ -827,7 +839,7 @@ function loadShares(page){
       var s=arr[i];
       var st=s.auto_refresh, cat=s.category||'未分类';
       // 显示「网盘/分类」（如 夸克/电视剧/国产剧），一眼看出这部在哪个盘
-      var pvShort=PVSHORT[s.provider]||s.provider||'';
+      var pvShort=pvLabel(s.provider||'');
       var catPath=pvShort?pvShort+'/'+cat:cat;
       t+='<tr><td>'+esc(cleanShow(s.show_name))+'<div class="tmeta">'+esc(catPath)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
         '<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>'+
