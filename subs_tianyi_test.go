@@ -93,3 +93,43 @@ func TestRenderIndexHasTianyiSub(t *testing.T) {
 		t.Fatalf("dump: %v", err)
 	}
 }
+
+// TestSubMarkDoneCap 断点 map 上限：
+//  ① 永久失败（没有视频文件）永远记，不受上限约束；
+//  ② 导入成功受 doneCap 约束，超了不再写（冗余信息，库里有）；
+//  ③ 空 key 不记。
+func TestSubMarkDoneCap(t *testing.T) {
+	e := &tianyiSubEntry{}
+	// 灌满到上限
+	for i := 0; i < doneCap; i++ {
+		if !subMarkDone(e, fmt.Sprintf("s%d", i), false) {
+			t.Fatalf("未到上限就写不进了: i=%d", i)
+		}
+	}
+	if len(e.Done) != doneCap {
+		t.Fatalf("Done 长度 %d, want %d", len(e.Done), doneCap)
+	}
+	// 成功类：超限，拒收
+	if subMarkDone(e, "overflow-success", false) {
+		t.Error("超过 doneCap 后成功类标记仍然写入了")
+	}
+	if e.Done["overflow-success"] {
+		t.Error("超过 doneCap 后成功类标记出现在 map 里")
+	}
+	// 永久失败类：超限也收
+	if !subMarkDone(e, "overflow-permanent", true) {
+		t.Error("永久失败标记被上限挡住了")
+	}
+	if !e.Done["overflow-permanent"] {
+		t.Error("永久失败标记没写进 map")
+	}
+	// 空 key 不记
+	if subMarkDone(e, "", false) || subMarkDone(e, "", true) {
+		t.Error("空 key 也被记账了")
+	}
+	// 未初始化 map 的 entry 也能用
+	e2 := &tianyiSubEntry{Done: nil}
+	if !subMarkDone(e2, "k1", false) || !e2.Done["k1"] {
+		t.Error("nil map 没有被自动初始化")
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,6 +43,34 @@ type tianyiSubEntry struct {
 	// Done 历史导入的断点：shareId → 已处理。一键导入历史时跳过这些，
 	// 中途叫停/断电后再次点击能从断点接着走，不会重复扫描已收过的分享。
 	Done map[string]bool `json:"done,omitempty"`
+}
+
+// doneCap 是 Done 断点 map 的硬上限（条）。超过后不再记录「导入成功」的
+// shareId —— 这类记录本来就是冗余的：
+//  ① 导入成功的分享都在 items.json 里，下次一键导入开头的「断点预热」
+//     会从库里重新推导一遍（见 tianyiBackfillRun）；
+//  ② store.AddBatch 按 FullPath 去重，万一重扫到也只是覆盖，不会重复收录。
+//
+// 真正不能丢的只有「没有视频文件」这类永久失败标记（量极小，始终记录）。
+// 正常订阅号几百上千条分享，离这个上限很远；只有异常庞大的号才会触发，
+// 触发后的代价仅仅是断点续传时多重扫几遍，功能不受影响。
+const doneCap = 20000
+
+// subMarkDone 记录一条断点。permanent=true 是永久失败（没有视频文件），
+// 必须记；false 是导入成功/库里已有，受 doneCap 上限约束。
+// 返回是否实际写入（日志与测试用）。
+func subMarkDone(e *tianyiSubEntry, key string, permanent bool) bool {
+	if key == "" {
+		return false
+	}
+	if e.Done == nil {
+		e.Done = map[string]bool{}
+	}
+	if !permanent && len(e.Done) >= doneCap {
+		return false
+	}
+	e.Done[key] = true
+	return true
 }
 
 // tianyiSubStore 订阅登记持久化（JSON 文件，独立于 items.json）。
@@ -653,7 +682,7 @@ func tianyiBackfillRun(store *Store, subs *tianyiSubStore, self, userID string, 
 	// 断点预热：库里已有的（此前手动收录/定时收录过的）直接算已处理
 	for _, it := range store.List() {
 		if it.SubUserID == userID && it.ShareNumID != "" {
-			e.Done[it.ShareNumID] = true
+			subMarkDone(e, it.ShareNumID, false)
 		}
 	}
 
@@ -661,6 +690,7 @@ func tianyiBackfillRun(store *Store, subs *tianyiSubStore, self, userID string, 
 
 	// 拉全量分享列表（按发布时间倒序，先收新的）
 	var all []tianyiSubShare
+	doneFullLogged := false // 断点写满的提示只打一次
 	for page := 1; page <= 200; page++ {
 		list, total, err := tianyiUpShares(cred, userID, int64(page), 50)
 		if err != nil {
@@ -711,14 +741,18 @@ func tianyiBackfillRun(store *Store, subs *tianyiSubStore, self, userID string, 
 			failed++
 			// 「没有视频文件」是永久结果，标记已处理避免反复扫；网络类错误留待重试
 			if strings.Contains(err.Error(), "没有视频文件") {
-				e.Done[key] = true
+				subMarkDone(e, key, true)
 			}
 		} else {
 			imported++
 			added += n
 			sinceRebuild++
 			e.Imported++
-			e.Done[key] = true
+			// 断点 map 有硬上限：超了只跳记录（冗余信息，丢不了实质，见 doneCap 注释）
+			if !subMarkDone(e, key, false) && !doneFullLogged {
+				doneFullLogged = true
+				log.Printf("[订阅号] %s 的断点记录已达上限 %d 条，后续成功记录不再写入（不影响收录，仅断点续传时多重扫几遍）", e.UserID, doneCap)
+			}
 		}
 		j.set(func(x *tianyiBackfill) {
 			x.Done, x.Imported, x.Added, x.Failed = processed, imported, added, failed
