@@ -899,7 +899,8 @@ func startShareRefresher(store *Store, every time.Duration, self string) {
 	if every <= 0 || globalShares == nil {
 		return
 	}
-	go func() {
+	// 【防崩】同巡检：裸 go func 时 autoRefreshCycle 一次 panic 就让追更永久停摆。
+	goSafeLoop("追更", time.Minute, func() {
 		first := 5 * time.Minute
 		if every < first {
 			first = every
@@ -912,7 +913,7 @@ func startShareRefresher(store *Store, every time.Duration, self string) {
 			autoRefreshCycle(store, self)
 			<-t.C
 		}
-	}()
+	})
 }
 
 // autoRefreshCycle 跑一轮定时刷新：遍历全部登记，只刷 auto_refresh=true 的。

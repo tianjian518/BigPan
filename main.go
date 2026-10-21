@@ -257,6 +257,15 @@ func streamRange(w http.ResponseWriter, pool *connPool, target, ua string, start
 		go func(idx int) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			// 【防崩】分片 worker 就算内部崩溃，也必须往 outs 里塞个错误结果 ——
+			// 少发一个，读取方就永久卡死在这个分片上，整个下载挂起。
+			// （recover 只能在本 goroutine 内生效，所以兜底必须写在这里。）
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[下载] 分片 %d 拉取时内部崩溃: %v", idx, r)
+					outs[idx] <- chunkResult{nil, fmt.Errorf("分片 %d 内部崩溃: %v", idx, r)}
+				}
+			}()
 			sg := segs[idx]
 			data, err := fetchRange(pool.get(idx), target, ua, sg.off, sg.off+sg.ln-1, retry)
 			outs[idx] <- chunkResult{data, err}
@@ -1612,14 +1621,14 @@ func main() {
 	log.Printf("默认参数 : 并发 %d 路 / 分片 %dMB / 重试 %d 次", *flagConc, *flagChunkMB, *flagRetry)
 
 	// 退出前把条目库的待写快照刷盘（items.json 是异步写，最多晚 120ms）。
-	go func() {
+	goSafe("退出刷盘", func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		store.Flush()
 		log.Printf("已刷盘，退出")
 		os.Exit(0)
-	}()
+	})
 
 	srv := &http.Server{
 		Addr:              addr,

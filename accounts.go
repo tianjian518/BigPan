@@ -137,11 +137,13 @@ func retireOldAccount(old Account) {
 		quarkLinkReset() // 302 直链短缓存也绑账号，一起清
 	}
 	if old.Provider == "baidu" && old.Cookie != "" {
-		go func(ck, label string) {
+		// 【防崩】一次性后台任务：panic 只记日志，不影响主流程。
+		ck, label := old.Cookie, old.Label
+		goSafe("旧百度账号清理", func() {
 			time.Sleep(10 * time.Second) // 给正在播放的请求一点缓冲
 			baiduPurgeOrphans(ck, 30*time.Minute)
 			log.Printf("[账号] 旧百度账号（%s）的临时转存文件已在后台清理", label)
-		}(old.Cookie, old.Label)
+		})
 	}
 	if old.Provider == "tianyi" {
 		tianyiResetClients() // 旧 token 的 API 门面不能复用
@@ -259,7 +261,8 @@ func startQR115() (*qrSession, error) {
 	qrMu.Lock()
 	qrSessions[s.id] = s
 	qrMu.Unlock()
-	go s.watch()
+	// 【防崩】轮询循环 panic 会让这次扫码静静失败，用户只会看到二维码不刷新。
+	goSafe("115扫码轮询", s.watch)
 	return s, nil
 }
 

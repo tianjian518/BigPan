@@ -67,7 +67,10 @@ func startShareHealthChecker(store *Store, every time.Duration, self string) {
 	if every <= 0 || globalShares == nil {
 		return
 	}
-	go func() {
+	// 【防崩】以前是裸 go func：healthCycle 里一次 panic（网盘返回没预料到的
+	// JSON 结构、空指针……）整个巡检循环静默死亡 —— 服务还通，但再也不巡检了。
+	// goSafeLoop 崩溃后自动重启循环（重启会重走首轮延迟，缓一手更稳）。
+	goSafeLoop("巡检", time.Minute, func() {
 		first := 10 * time.Minute
 		if every < first {
 			first = every
@@ -81,7 +84,7 @@ func startShareHealthChecker(store *Store, every time.Duration, self string) {
 			healthCycle(store, self)
 			<-t.C
 		}
-	}()
+	})
 }
 
 // healthTargets 本轮要扫的分享：登记表 ∪ 条目里出现过的分享。

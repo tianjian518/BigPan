@@ -855,7 +855,8 @@ func baiduTempHas(p string) bool {
 // 挤到只剩 68GB，飞牛影视全库扫描时直接 errno=12 全线 502。
 // 所以启动时必须先去盘上扫一遍，把遗留文件纳入清理范围。
 func baiduStartSweeper() {
-	go func() {
+	// 【防崩】清扫循环死了没人知道，临时文件会静静堆满网盘（实测堆到过 44.8GB）。
+	goSafeLoop("百度临时文件清扫", 10*time.Minute, func() {
 		// 启动自愈：清掉盘上所有 30 分钟前的遗留文件（容器刚起，这段时间内不会有
 		// 正在进行的播放；再近的留给下面常规清扫，避免打断刚拿到直链的 302 播放）。
 		//
@@ -902,7 +903,7 @@ func baiduStartSweeper() {
 			// 误伤防护在 baiduPurgeDir 里：内存 map 有的路径直接跳过。
 			baiduPurgeFixedDirs(cookie, 30*time.Minute)
 		}
-	}()
+	})
 }
 
 // baiduPurgeOrphans 完整启动清理：两个固定名临时目录 + 根目录的时间戳遗留。

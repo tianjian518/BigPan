@@ -110,9 +110,11 @@ func getPool(n int, ua, cookie string) *connPool {
 }
 
 // 定期清理过期直链缓存，避免内存里堆积死链接。
+// 【防崩】清理循环死了没人知道，过期链接会静静堆积（缓慢内存泄漏）。
 func init() {
-	go func() {
+	goSafeLoop("直链缓存清理", 5*time.Minute, func() {
 		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
 		for range t.C {
 			now := time.Now()
 			ptMu.Lock()
@@ -123,7 +125,7 @@ func init() {
 			}
 			ptMu.Unlock()
 		}
-	}()
+	})
 }
 
 // ---------------------------------------------------------------------------

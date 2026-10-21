@@ -311,7 +311,9 @@ func rebuildSTRMAsync(store *Store, self, reason string) {
 	if self == "" || !strmCfg.AutoRebuild {
 		return
 	}
-	go func() {
+	// 【防崩】buildSTRM 内部 panic 时：defer 会正常释放 strmMu（不会死锁），
+	// 但以前 goroutine 静默死亡、没人知道重建失败。goSafe 至少留下现场日志。
+	goSafe("strm重建", func() {
 		strmMu.Lock()
 		defer strmMu.Unlock()
 		n, err := buildSTRM(store, self, false)
@@ -320,7 +322,7 @@ func rebuildSTRMAsync(store *Store, self, reason string) {
 			return
 		}
 		log.Printf("[strm] %s后已重建：%d 个", reason, n)
-	}()
+	})
 }
 
 // apiSTRMRebuild 手动全量重建（设置页按钮）：地址变过也全部重写。

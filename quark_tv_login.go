@@ -82,7 +82,8 @@ func startQRQuarkTV(as *AccountStore) (*qtvQRSession, error) {
 	qtvQRMu.Lock()
 	qtvQRSessions[s.id] = s
 	qtvQRMu.Unlock()
-	go s.watch()
+	// 【防崩】同上：轮询 panic 会让扫码静静失败。
+	goSafe("夸克TV扫码轮询", s.watch)
 	return s, nil
 }
 

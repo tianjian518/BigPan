@@ -63,7 +63,8 @@ func quarkTempReset() {
 
 // quarkStartSweeper 启动后台清扫（在 init() 里调用）。
 func quarkStartSweeper() {
-	go func() {
+	// 【防崩】同百度清扫器：循环死了没人知道，临时文件静静堆满网盘。
+	goSafeLoop("夸克临时文件清扫", 10*time.Minute, func() {
 		// 启动自愈：清掉盘上 2 小时前的遗留文件。容器刚起这段时间不会有
 		// 正在进行的播放；更近的留给常规清扫，避免打断刚拿到直链的 302 播放。
 		//
@@ -105,7 +106,7 @@ func quarkStartSweeper() {
 			// quarkPurgeDir 里：记账里有的 fid 直接跳过。
 			quarkPurgeDir(q, quarkTmpTTL)
 		}
-	}()
+	})
 }
 
 // quarkPurgeDir 清扫临时目录：列目录 → 删 mtime 超过 minAge 且不在记账里的文件。

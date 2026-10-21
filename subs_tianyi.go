@@ -291,7 +291,8 @@ func startTianyiSubRefresher(store *Store, subs *tianyiSubStore, self string, ev
 	if subs == nil || every <= 0 {
 		return
 	}
-	go func() {
+	// 【防崩】订阅同步是长期循环，裸 go func 时内部一次 panic 就永久停摆。
+	goSafeLoop("订阅同步", time.Minute, func() {
 		time.Sleep(2 * time.Minute) // 开机先让主服务稳定
 		for {
 			for _, e := range subs.List() {
@@ -303,7 +304,7 @@ func startTianyiSubRefresher(store *Store, subs *tianyiSubStore, self string, ev
 			}
 			time.Sleep(every)
 		}
-	}()
+	})
 }
 
 // ---------------------------------------------------------------------------
