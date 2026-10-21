@@ -588,7 +588,9 @@ func apiShares(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		type row struct {
 			ShareSummary
-			AutoRefresh bool `json:"auto_refresh"`
+			AutoRefresh bool   `json:"auto_refresh"`
+			FailCount   int    `json:"fail_count"`           // 巡检连续失败轮数（≥1 即疑似失效）
+			LastError   string `json:"last_error,omitempty"` // 最近一次探测错误
 		}
 		list := store.Shares()
 		out := make([]row, 0, len(list))
@@ -599,6 +601,8 @@ func apiShares(store *Store) http.HandlerFunc {
 			it := row{ShareSummary: s, AutoRefresh: true}
 			if m := globalShares.Get(s.Provider, s.ShareID); m != nil {
 				it.AutoRefresh = m.AutoRefresh
+				it.FailCount = m.FailCount
+				it.LastError = m.LastError
 				if m.Show != "" {
 					it.ShowName = m.Show
 				}
@@ -752,6 +756,7 @@ var refreshMu sync.Mutex
 // 分类/剧名沿用已入库条目的值（用户手工改过名、设过分类都保留）；
 // 显式传入的 category 优先。passcode 为空表示无提取码分享。
 func refreshShareOnce(store *Store, provider, shareID, passcode, category string) (show string, added, total int, err error) {
+	updated := 0 // 同名同路径但 file_id 变了（分享主重传），就地更新
 	p := providerByName(provider)
 	if p == nil {
 		return "", 0, 0, fmt.Errorf("不支持的网盘: %s", provider)
@@ -789,9 +794,6 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 		if name == "" {
 			continue
 		}
-		if existTitles[name] {
-			continue
-		}
 		// 目录构造统一走 buildItemDir（分类/剧名/同名嵌套折叠都在里面）
 		dir := buildItemDir(provider, cat, show, f.Path)
 		ext := strings.ToLower(filepath.Ext(f.Name))
@@ -799,8 +801,38 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 			ext = strings.ToLower(filepath.Ext(f.Path))
 		}
 		full := dir + "/" + safeFilename(name) + ext
-		if store.FindByPath(full) != nil {
-			continue // 已在库里
+
+		// 【2026-10-21 修】同名同路径已存在时，**先比对 file_id**。
+		//
+		// 分享主替换文件是常事：文件名不变、内容重传，网盘会给新的 file_id。
+		// 旧逻辑只看「名字/路径是否已存在」就 continue，导致条目里永远留着
+		// 作废的旧 ID —— 播放取链返回「资源不存在」，而巡检探测的是「分享还在
+		// 不在」，分享活着所以也不会清理。结果是这条永久 502、谁都不管
+		// （移动「璀璨之城」就是典型）。
+		if it := store.FindByPath(full); it != nil {
+			if it.FileID != f.ID {
+				oldID := it.FileID
+				store.Update(it.ID, func(x *Item) {
+					x.FileID = f.ID
+					if f.Size > 0 {
+						x.Size = f.Size
+					}
+					if f.FidToken != "" {
+						x.FidToken = f.FidToken
+					}
+					if f.ShareNumID != "" {
+						x.ShareNumID = f.ShareNumID
+					}
+				})
+				updated++
+				log.Printf("[追更] %s/%s 文件已被替换，同步取链标识：%s → %s（%s）",
+					provider, show, oldID, f.ID, name)
+			}
+			existTitles[name] = true
+			continue
+		}
+		if existTitles[name] {
+			continue // 同名但落在别的目录（分享主放了两份），只收第一份
 		}
 		store.Add(Item{
 			Title: name, Dir: dir,
@@ -812,7 +844,11 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 		existTitles[name] = true
 		added++
 	}
-	log.Printf("[追更] %s/%s 重扫 %d 个视频，新增 %d 个", provider, show, total, added)
+	if updated > 0 {
+		log.Printf("[追更] %s/%s 重扫 %d 个视频，新增 %d 个，同步取链标识 %d 个", provider, show, total, added, updated)
+	} else {
+		log.Printf("[追更] %s/%s 重扫 %d 个视频，新增 %d 个", provider, show, total, added)
+	}
 	return show, added, total, nil
 }
 

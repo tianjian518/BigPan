@@ -305,6 +305,9 @@ func (c *m139Client) shareTitle(linkID, passcode string) string {
 // scan139Share BFS 递归扫整棵分享目录树（与夸克 scanQuarkShare 同款）。
 // 上限：目录 200 / 文件 500。coID 用入库时的值跨会话取流（实测有效）。
 func scan139Share(c *m139Client, linkID, passcode string) (title string, files []ShareFile, err error) {
+	// totalVideo 统计「视频扩展名的文件数」，包含被跳过的 ISO。
+	// 用来区分两种「files 为空」：真空分享（该判死清理）vs 只有 ISO（保留）。
+	totalVideo := 0
 	type job struct{ caID, prefix string }
 	queue := []job{{caID: "root"}}
 	seen := 0
@@ -333,6 +336,7 @@ func scan139Share(c *m139Client, linkID, passcode string) (title string, files [
 			if !isVideo(f.CoName) {
 				continue
 			}
+			totalVideo++
 			// 139 分享盘对 .iso 不提供转码流（presentURL 为空），分享场景也拿不到
 			// 原文件下载直链 —— 收录了也无流可播，纯粹占列表，扫描时直接跳过。
 			if strings.HasSuffix(strings.ToLower(f.CoName), ".iso") {
@@ -349,7 +353,12 @@ func scan139Share(c *m139Client, linkID, passcode string) (title string, files [
 		}
 	}
 	if len(files) == 0 {
-		return "", nil, fmt.Errorf("分享里没有找到视频文件")
+		if totalVideo == 0 {
+			// 分享里一个视频文件都没有（连 ISO 都没有）——这是真空分享，
+			// 巡检应当判死并清理。与「只有 ISO」必须区分开，否则失效分享永远留着。
+			return "", nil, fmt.Errorf("分享里没有任何文件")
+		}
+		return "", nil, fmt.Errorf("分享里只有 ISO 镜像（139 不提供播放流）")
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return title, files, nil

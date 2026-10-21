@@ -73,6 +73,7 @@ func apiShareBatchParse(store *Store) http.HandlerFunc {
 		}
 		var req struct {
 			Links []string `json:"links"`
+			Pwd   string   `json:"pwd"` // 单独填的提取码，仅在只粘了一条链接时生效
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "请求格式错误"})
@@ -91,17 +92,24 @@ func apiShareBatchParse(store *Store) http.HandlerFunc {
 			Passcode string `json:"passcode,omitempty"`
 			Count    int    `json:"count"` // 视频文件数
 			Exists   bool   `json:"exists,omitempty"`
-			Error    string `json:"error,omitempty"`
+			// Files 预览用：让用户在入库前能展开取消勾选（和单条导入一致）。
+			Files []ShareFile `json:"files,omitempty"`
+			Error string      `json:"error,omitempty"`
 		}
 		out := make([]row, 0, len(req.Links))
 
+		// 只粘了一条时，允许用独立的「提取码」输入框（和单条导入的用法一致）。
+		var singlePwd string
+		if len(req.Links) == 1 {
+			singlePwd = strings.TrimSpace(req.Pwd)
+		}
 		for _, raw := range req.Links {
 			raw = normalizeBatchLink(raw)
 			if raw == "" {
 				continue
 			}
 			it := row{Link: raw}
-			link := mergeSharePwd(raw, "")
+			link := mergeSharePwd(raw, singlePwd)
 			p := findProvider(link)
 			if p == nil {
 				it.Error = "不认识的链接（支持：" + strings.Join(providerList(), "、") + "）"
@@ -126,6 +134,7 @@ func apiShareBatchParse(store *Store) http.HandlerFunc {
 			it.ShareID = info.ShareID
 			it.Passcode = info.Passcode
 			it.Count = n
+			it.Files = info.Files
 			it.Exists = shareExists(store, info.Provider, info.ShareID)
 			if n == 0 {
 				it.OK = false
@@ -154,7 +163,11 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 			Items []struct {
 				Provider string `json:"provider"`
 				ShareID  string `json:"share_id"`
-				Category string `json:"category"` // 每行独立分类
+				Category string `json:"category"` // 每行独立分类（可两级：父/子）
+				Title    string `json:"title"`    // 每行独立的剧名（空 = 用分享自带标题）
+				// Files 可选：只收这些 fileID（用户在预览里取消了部分勾选）；
+				// 空 = 全收（默认）。
+				Files []string `json:"files"`
 			} `json:"items"`
 			AutoRefresh *bool `json:"auto_refresh"`
 		}
@@ -188,7 +201,12 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 				out = append(out, rr)
 				continue
 			}
-			rr.Title = info.Title
+			// 剧名以用户改过的为准；没改就用分享自带标题。
+			showName := strings.TrimSpace(item.Title)
+			if showName == "" {
+				showName = info.Title
+			}
+			rr.Title = showName
 			if shareExists(store, info.Provider, info.ShareID) {
 				rr.OK, rr.Skipped = true, true
 				out = append(out, rr)
@@ -200,16 +218,27 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 				out = append(out, rr)
 				continue
 			}
-			showFinal := safeFilename(strings.TrimSpace(info.Title))
+			showFinal := safeFilename(showName)
 			if showFinal == "" {
 				showFinal = "未命名"
+			}
+			// 勾选白名单（预览里取消过的文件不入库）
+			var keep map[string]bool
+			if len(item.Files) > 0 {
+				keep = make(map[string]bool, len(item.Files))
+				for _, id := range item.Files {
+					keep[id] = true
+				}
 			}
 			batch := make([]Item, 0, len(info.Files))
 			for _, f := range info.Files {
 				if f.ID == "" || f.IsDir || !isVideo(f.Name) {
 					continue
 				}
-				dir := buildItemDir(info.Provider, category, info.Title, f.Path)
+				if keep != nil && !keep[f.ID] {
+					continue
+				}
+				dir := buildItemDir(info.Provider, category, showName, f.Path)
 				ext := strings.ToLower(filepath.Ext(f.Name))
 				if ext == "" {
 					ext = strings.ToLower(filepath.Ext(f.Path))

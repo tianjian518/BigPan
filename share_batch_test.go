@@ -43,12 +43,28 @@ func TestShareExists(t *testing.T) {
 	}
 }
 
-// TestRenderIndexHasBatchImport 确认页面里真的塞进了批量导入卡片。
+// TestRenderIndexHasBatchImport 确认导入页是「单条 + 批量合一」的那一套。
 func TestRenderIndexHasBatchImport(t *testing.T) {
 	html := renderIndex(nil, nil, "http://127.0.0.1:8080")
-	for _, want := range []string{"batchText", "batchParse()", "batchApplyAll()", "批量导入"} {
-		if !strings.Contains(html, want) {
-			t.Errorf("页面缺少 %q", want)
+	want := []string{
+		"batchText",     // 一个粘贴框，一条多条都走它
+		"batchParse()",  // 解析
+		"bApplyAll()",   // 统一分类：应用到全部
+		"bCat1Opts",     // 一级分类下拉（可选已有 / 新建）
+		"bCat2Opts",     // 二级分类下拉
+		"bTitle(",       // 剧名逐条可改
+		"bOpen(",        // 展开文件、取消勾选
+		"粘贴分享链接",
+	}
+	for _, w := range want {
+		if !strings.Contains(html, w) {
+			t.Errorf("页面缺少 %q", w)
+		}
+	}
+	// 旧的「单条导入」独立卡片必须已经没了，否则又是两套逻辑
+	for _, dead := range []string{`id="shareLink"`, `id="parseOut"`, "function doParse(", "batchApplyAll("} {
+		if strings.Contains(html, dead) {
+			t.Errorf("页面还残留旧单条导入的痕迹：%q", dead)
 		}
 	}
 }

@@ -371,21 +371,14 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     <div id="pg-import" style="display:none">
       <div class="pagehd"><h2>分享导入</h2><span class="sub">粘贴链接 → 按目录树收进虚拟盘 → 自动追更</span></div>
       <div class="card">
-        <div class="chd"><b>批量导入</b><span class="csub">一行一条链接，可混着粘；先解析预览，再逐行调分类（也支持一键统一）</span></div>
-        <textarea id="batchText" placeholder="https://cloud.189.cn/t/xxxx（访问码：abcd）&#10;https://pan.quark.cn/s/xxxx&#10;https://pan.baidu.com/s/xxxx?pwd=abcd" style="width:100%;height:110px;margin-top:10px;box-sizing:border-box;font-size:13px;line-height:1.6;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--fg)"></textarea>
+        <div class="chd"><b>粘贴分享链接</b><span class="csub">一条多条都行，一行一条，可混着粘</span></div>
+        <textarea id="batchText" placeholder="https://cloud.189.cn/t/xxxx（访问码：abcd）&#10;https://pan.quark.cn/s/xxxx&#10;https://pan.baidu.com/s/xxxx?pwd=abcd" style="width:100%;height:104px;margin-top:10px;box-sizing:border-box;font-size:13px;line-height:1.6;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--fg)"></textarea>
         <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
-          <button onclick="batchParse()">解析预览</button>
-          <span class="sub">支持 夸克 / 百度 / 115 / 移动 / 天翼，访问码跟在链接后面就行</span>
+          <button onclick="batchParse()">解析</button>
+          <input type="text" id="sharePwd" placeholder="提取码(选填)" style="width:140px">
+          <span class="sub">支持 夸克 / 百度 / 115 / 移动 / 天翼。访问码直接跟在链接后面（如「（访问码：xx11）」）；只粘一条时也可以填在左边框里。</span>
         </div>
         <div id="batchOut" style="margin-top:12px"></div>
-      </div>
-      <div class="card">
-        <div class="row">
-          <input type="text" id="shareLink" placeholder="粘贴分享链接，如 https://pan.quark.cn/s/xxxx" style="flex:1;min-width:220px">
-          <input type="text" id="sharePwd" placeholder="提取码(选填)" style="width:130px">
-          <button onclick="doParse()">解析</button>
-        </div>
-        <div id="parseOut" style="margin-top:12px"></div>
       </div>
       <div class="card">
         <b style="font-size:14px">已导入的分享（追更）<span class="cd">一个分享链接 = 一部剧 / 一部电影 · 追更中的会自动收新剧集</span></b>
@@ -541,10 +534,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
   </div>
 </div>
 <script>
-var ITEMS=[], SELF='', CURID='', TREE={}, PARSED=null, MOK=null;
-// 解析结果默认只展示前 8 条，避免几百个视频把页面撑爆；勾选状态用 SELMAP 保存，
-// 隐藏的行同样计入“全选”，导入时按 SELMAP 取，不依赖 DOM。
-var PARSELIMIT=8, PARSESHOWALL=false, SELMAP=[];
+var ITEMS=[], SELF='', CURID='', TREE={}, MOK=null;
 var PVCN={quark:'夸克网盘','115':'115网盘',mobile139:'移动云盘',tianyi:'天翼云盘',baidu:'百度网盘'};
 // 列表/概览里的短名：「夸克/电视剧/国产剧」比「夸克网盘/…」清爽
 var PVSHORT={quark:'夸克','115':'115',mobile139:'移动',tianyi:'天翼',baidu:'百度'};
@@ -587,7 +577,7 @@ function nav(p){
   if(p==='tianyi-sub'){loadTianyiSubs();tsBfPoll(false);}
 }
 (function(){var as=document.querySelectorAll('.nav a');for(var i=0;i<as.length;i++){as[i].onclick=function(){nav(this.getAttribute('data-p'))}}})();
-['shareLink','sharePwd'].forEach(function(id){var el=$(id);if(el)el.addEventListener('keydown',function(e){if(e.key==='Enter')doParse()})});
+(function(){var el=$('sharePwd');if(el)el.addEventListener('keydown',function(e){if(e.key==='Enter')batchParse()})})();
 
 // ---- 自定义确认弹窗（替代原生 confirm） ----
 function openModal(title,body,okText,onOk){
@@ -703,41 +693,280 @@ function gotShow(el){
   toast('已筛选：'+name);
 }
 
-// ---- 分享导入 ----
-function doParse(){
-  var link=$('shareLink').value.trim(); if(!link){toast('先粘贴分享链接');return}
-  $('parseOut').innerHTML='<div class="loading"><span class="spin"></span>解析中，目录多的话要十几秒…</div>';
-  fetch('/api/share/parse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({link:link,pwd:$('sharePwd').value.trim()})})
-  .then(function(r){return r.json()}).then(function(d){
-    if(!d.ok){$('parseOut').innerHTML='<div class="empty"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg></div><b>解析失败</b>'+esc(d.error)+'</div>';return}
-    PARSED=d;
-    PARSESHOWALL=false;
-    SELMAP=d.files.map(function(){return true});
-    var pvName=PVCN[d.provider]||d.provider;
-    var h='<div class="card" style="background:var(--pri2);border-color:#d6e2ff;margin:0 0 10px">'+
-      '<span class="tag '+(PVCLS[d.provider]||'')+'">'+esc(pvName)+'</span>共 '+d.files.length+' 个视频'+
-      (d.logged?'':' <span style="color:var(--warn)">⚠ 未导入取流账号：能解析，但播放前要先在「设置」导入凭证</span>')+'</div>';
-    h+='<div class="row" style="margin:0 0 10px"><span class="sub" style="margin:0;white-space:nowrap;font-weight:600;color:var(--txt)">分类：</span>'+
-      '<select id="catSel1" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat1Change()"></select>'+
-      '<select id="catSel2" style="display:none;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfe" onchange="onCat2Change()"></select>'+
-      '<input type="text" id="catNew1" placeholder="一级分类名，如：电视剧" style="display:none;flex:1;min-width:130px" oninput="onCatNew1Input(\'catSel2\',\'catNew1\')">'+
-      '<input type="text" id="catNew2" placeholder="二级分类名，如：国产剧" style="display:none;flex:1;min-width:130px">'+
-      '<span class="sub" style="margin:0;white-space:nowrap;font-weight:600;color:var(--txt)">剧名：</span>'+
-      '<input type="text" id="showName" style="flex:1;min-width:200px" value="'+esc(d.title)+'"></div>'+
-      '<div class="tips" style="margin:0 0 10px">「分类」= 这部剧在媒体库里放的文件夹名，支持两级：先选一级（如「电视剧」），再在它下面选或建二级（如「国产剧」）。<b>选错了不慌</b>：导入后到分享列表点这行的「分类」随时能改。「剧名」会显示在媒体库和飞牛影视里，建议用完整片名。</div>';
-    h+='<table><thead><tr><th style="width:34px"><input type="checkbox" id="ckAll" checked onchange="toggleAll(this.checked)"></th><th>分享内路径</th><th style="width:110px;text-align:right">大小</th></tr></thead><tbody id="parseRows"></tbody></table>';
-    h+='<div class="row" style="margin-top:12px"><button onclick="doAdd()">加入虚拟盘</button>'+
-      '<span class="sub" style="margin:0" id="selN"></span>'+
-      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-left:auto"><input type="checkbox" id="ckAuto" checked>导入后开启追更（完结剧可取消）</label></div>'+
-      '<div class="sub" style="margin:10px 0 0">导入后出现在 /dav/'+esc(pvName)+'/ 目录下</div>';
-    $('parseOut').innerHTML=h;
-    renderParseRows();
-    updSel();
-    fillCats(); // 必须在 innerHTML 之后调用 —— 那时下拉框才存在
-  }).catch(function(e){$('parseOut').innerHTML='<div class="empty"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg></div><b>解析失败</b>网络错误：'+esc(e)+'</div>'});
+// ---- 分享导入（单条 / 批量同一套流程） ----
+// 一个粘贴框 → 解析 → 统一预览表：每行可改剧名、选两级分类（可选已有或新建）、
+// 展开勾选要收的文件 → 一次导入。单条就是「只有一行」，不再有第二套界面。
+var BATCH_ROWS=[];
+
+function batchSplit(text){
+  // 换行 / 分号 拆行；行首编号去掉；从 http 开始截取（丢掉前面的片名等中文）；
+  // 一行里粘了多条链接也能拆开。这样「《成龙》70部…  https://…（访问码：xx11）」
+  // 只会把 URL 部分传给后端，片名不会干扰提取码解析。
+  var out=[];
+  String(text||'').split(/[\n\r;；]+/).forEach(function(line){
+    line=line.replace(/^\s*\d+[\.、．)）]\s*/,'');
+    var parts=line.split(/(?=https?:\/\/)/);
+    for(var i=0;i<parts.length;i++){
+      var k=parts[i].indexOf('http');
+      if(k<0)continue;
+      var u=parts[i].slice(k).trim();
+      if(u)out.push(u);
+    }
+  });
+  return out;
 }
-function onCat1Change(){catSel1Change('catSel1','catSel2','catNew1','catNew2')}
-function onCat2Change(){catSel2Change('catSel2','catNew2')}
+
+function batchParse(){
+  var links=batchSplit($('batchText').value);
+  if(!links.length){toast('没识别到链接，一行一条，以 http 开头');return}
+  var pwd=$('sharePwd')?$('sharePwd').value.trim():'';
+  var box=$('batchOut');
+  box.innerHTML='<div class="loading"><span class="spin"></span>解析中：共 '+links.length+' 条，大合集要十几秒…</div>';
+  fetch('/api/share/batch/parse',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({links:links,pwd:pwd})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(!d.ok){box.innerHTML='<div class="empty"><b>解析失败</b>'+esc(d.error||'')+'</div>';return}
+    BATCH_ROWS=(d.rows||[]).map(function(r){
+      r.orig_title=r.title||'';
+      r.cat1='';r.cat2='';r.open=false;
+      r.sel={};(r.files||[]).forEach(function(f){r.sel[f.id]=true});
+      return r;
+    });
+    // 分类下拉要用「已导入的条目 + 分享列表」拼出来的分类树
+    loadItems(function(){renderBatchRows()});
+  }).catch(function(e){
+    box.innerHTML='<div class="empty"><b>解析失败</b>网络错误：'+esc(String(e))+'</div>';
+  });
+}
+
+// 一级下拉：不分类 / 已有顶级分类 / 新建
+function bCat1Opts(cur){
+  var h='<option value="">不分类</option>';
+  var t=catTree();
+  Object.keys(t).sort().forEach(function(p){
+    h+='<option value="'+escA(p)+'"'+(p===cur?' selected':'')+'>'+esc(p)+'</option>';
+  });
+  h+='<option value="__new1__">➕ 新建一级分类…</option>';
+  return h;
+}
+// 二级下拉：不分二级 / 该一级下已有的二级 / 新建
+function bCat2Opts(parent,cur){
+  var h='<option value="">不分二级</option>';
+  var t=(catTree()[parent]||{});
+  Object.keys(t).sort().forEach(function(c){
+    h+='<option value="'+escA(c)+'"'+(c===cur?' selected':'')+'>'+esc(c)+'</option>';
+  });
+  h+='<option value="__new2__">➕ 新建二级分类…</option>';
+  return h;
+}
+// 分类拼成入库用的 "一级/二级"
+function bCatOf(r){
+  if(!r.cat1)return '';
+  return r.cat2?(r.cat1+'/'+r.cat2):r.cat1;
+}
+function bTitle(i,el){BATCH_ROWS[i].title=el.value}
+function bCat1(i,el){
+  var r=BATCH_ROWS[i],v=el.value;
+  if(v==='__new1__'){
+    var n=(prompt('新建一级分类，如：电视剧 / 电影 / 动漫')||'').trim();
+    if(!n){el.value=r.cat1||'';return}
+    ensureCatOpt(el,n);el.value=n;r.cat1=n;r.cat2='';
+  }else{
+    var oldv=r.cat1;
+    r.cat1=v;
+    if(v!==oldv)r.cat2=''; // 换了一级，原来的二级不再适用
+  }
+  if(!r.cat1)r.cat2='';
+  var s2=document.getElementById('bc2_'+i);
+  if(s2){s2.innerHTML=bCat2Opts(r.cat1,'')}
+}
+function bCat2(i,el){
+  var r=BATCH_ROWS[i],v=el.value;
+  if(v==='__new2__'){
+    var n=(prompt('新建二级分类，如：国产剧 / 欧美剧')||'').trim();
+    if(!n){el.value=r.cat2||'';return}
+    ensureCatOpt(el,n);el.value=n;r.cat2=n;
+  }else{
+    r.cat2=v;
+  }
+}
+function bOpen(i){
+  var r=BATCH_ROWS[i];if(!r)return;
+  r.open=!r.open;
+  var tr=document.getElementById('bf_'+i);
+  if(tr)tr.style.display=r.open?'':'none';
+}
+function bCkFile(i,fid,el){
+  var r=BATCH_ROWS[i];if(!r)return;
+  r.sel[fid]=el.checked;
+  var n=0;(r.files||[]).forEach(function(f){if(r.sel[f.id])n++});
+  var el2=document.getElementById('bn_'+i);
+  if(el2)el2.textContent=n+'/'+(r.files||[]).length;
+}
+function bCkAll(i,v){
+  var r=BATCH_ROWS[i];if(!r)return;
+  (r.files||[]).forEach(function(f){r.sel[f.id]=v});
+  var box=document.getElementById('bf_'+i);
+  if(box){
+    var cks=box.querySelectorAll('input[type=checkbox]');
+    for(var k=0;k<cks.length;k++)cks[k].checked=v;
+  }
+  var el2=document.getElementById('bn_'+i);
+  if(el2)el2.textContent=(v?(r.files||[]).length:0)+'/'+(r.files||[]).length;
+}
+// 统一分类：给所有「待导入」行刷同一个分类
+function bApplyAll(){
+  var v1=$('ball1'),v2=$('ball2');
+  var c1=v1?v1.value:'',c2=v2?v2.value:'';
+  if(c1==='__new1__'){
+    c1=(prompt('新建一级分类名称')||'').trim();
+    if(!c1){toast('没填名字，已取消');return}
+    ensureCatOpt(v1,c1);v1.value=c1;
+  }
+  if(c2==='__new2__'){
+    c2=(prompt('新建二级分类名称')||'').trim();
+    if(!c2){toast('没填名字，已取消');return}
+    ensureCatOpt(v2,c2);v2.value=c2;
+  }
+  if(!c1)c2='';
+  var n=0;
+  BATCH_ROWS.forEach(function(r){
+    if(!r.ok||r.exists)return;
+    r.cat1=c1;r.cat2=c2;n++;
+  });
+  renderBatchRows();
+  toast(n?('已把「'+(bCatOf({cat1:c1,cat2:c2})||'不分类')+'」应用到 '+n+' 条'):'没有可设置的条目');
+}
+
+function renderBatchRows(){
+  var box=$('batchOut');
+  var ok=0,dup=0,bad=0;
+  BATCH_ROWS.forEach(function(r){
+    if(!r.ok)bad++;else if(r.exists)dup++;else ok++;
+  });
+  var h='<table style="width:100%;border-collapse:collapse;font-size:13px">'
+   +'<thead><tr style="text-align:left;color:var(--dim);font-size:12px">'
+   +'<th style="padding:6px 6px 6px 0">剧名（可改）</th>'
+   +'<th style="padding:6px 4px;width:86px">网盘</th>'
+   +'<th style="padding:6px 4px;width:74px">文件</th>'
+   +'<th style="padding:6px 4px;width:150px">一级分类</th>'
+   +'<th style="padding:6px 4px;width:150px">二级分类</th>'
+   +'<th style="padding:6px 4px;width:96px">状态</th></tr></thead><tbody>';
+
+  BATCH_ROWS.forEach(function(r,i){
+    var editable=(r.ok&&!r.exists);
+    h+='<tr style="border-top:1px solid var(--line);vertical-align:top">';
+    // 剧名
+    h+='<td style="padding:7px 6px 7px 0">';
+    if(editable){
+      h+='<input type="text" value="'+escA(r.title||'')+'" oninput="bTitle('+i+',this)" style="width:100%;min-width:180px">';
+      if(r.orig_title&&r.orig_title!==r.title){
+        h+='<div class="cd" style="font-size:11px;margin-top:2px">原：'+esc(r.orig_title)+'</div>';
+      }
+    }else{
+      h+='<div style="padding:5px 0">'+esc(r.title||String(r.link||'').slice(0,48))+'</div>';
+    }
+    h+='</td>';
+    // 网盘
+    h+='<td style="padding:7px 4px">'+(PVCN[r.provider]||r.provider||'-')+'</td>';
+    // 文件数（可展开）
+    h+='<td style="padding:7px 4px">';
+    if(r.ok&&r.files&&r.files.length){
+      h+='<a href="javascript:;" onclick="bOpen('+i+')" style="text-decoration:none"><span id="bn_'+i+'">'+
+         (r.files.filter(function(f){return r.sel[f.id]}).length)+'/'+r.files.length+'</span> '+(r.open?'▴':'▾')+'</a>';
+    }else{
+      h+='<span class="cd">'+(r.count||0)+'</span>';
+    }
+    h+='</td>';
+    // 一级 / 二级
+    if(editable){
+      h+='<td style="padding:7px 4px"><select id="bc1_'+i+'" onchange="bCat1('+i+',this)" style="width:100%">'+bCat1Opts(r.cat1)+'</select></td>';
+      h+='<td style="padding:7px 4px"><select id="bc2_'+i+'" onchange="bCat2('+i+',this)" style="width:100%">'+bCat2Opts(r.cat1,r.cat2)+'</select></td>';
+    }else{
+      h+='<td style="padding:7px 4px"><span class="cd">-</span></td><td style="padding:7px 4px"><span class="cd">-</span></td>';
+    }
+    // 状态
+    h+='<td style="padding:7px 4px">';
+    if(!r.ok){h+='<span style="color:var(--danger)">'+esc(r.error||'失败')+'</span>';}
+    else if(r.exists){h+='<span class="cd">已导入过</span>';}
+    else {h+='<span style="color:var(--ok)">待导入</span>';}
+    h+='</td></tr>';
+    // 展开的文件勾选行
+    if(r.ok&&r.files&&r.files.length){
+      h+='<tr id="bf_'+i+'" style="display:'+(r.open?'':'none')+'"><td colspan="6" style="padding:0 0 10px 0;background:var(--bg2)">'
+       +'<div style="padding:8px 10px">'
+       +'<div style="margin-bottom:6px"><label style="font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" checked onchange="bCkAll('+i+',this.checked)">全选（取消勾选的文件不会收录）</label></div>'
+       +'<table style="width:100%;font-size:12px;border-collapse:collapse">';
+      r.files.forEach(function(f){
+        if(!isVideoName(f.name||f.path||''))return;
+        h+='<tr><td style="width:26px;padding:2px 0"><input type="checkbox" '+(r.sel[f.id]?'checked':'')+
+           ' onchange="bCkFile('+i+',\''+escA(f.id)+'\',this)"></td>'
+         +'<td class="brk" style="padding:2px 6px 2px 0">'+esc(f.path||f.name)+'</td>'
+         +'<td class="num" style="width:90px;padding:2px 0">'+humanSize(f.size)+'</td></tr>';
+      });
+      h+='</table></div></td></tr>';
+    }
+  });
+  h+='</tbody></table>';
+
+  h+='<div class="row" style="margin-top:12px;gap:8px;align-items:center;flex-wrap:wrap">'
+   +'<span class="sub" style="margin:0">统一分类</span>'
+   +'<select id="ball1" style="width:140px" onchange="(function(v){var s=$(\'ball2\');if(s)s.innerHTML=bCat2Opts(v===\'__new1__\'?\'\':v,\'\')})(this.value)">'+bCat1Opts('')+'</select>'
+   +'<select id="ball2" style="width:140px">'+bCat2Opts('','')+'</select>'
+   +'<button class="mini gray" onclick="bApplyAll()">应用到全部</button>'
+   +'<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-left:8px"><input type="checkbox" id="ckAuto" checked>导入后开启追更</label>'
+   +'<button onclick="batchAdd()" style="margin-left:auto">开始导入</button>'
+   +'</div>'
+   +'<div class="row" style="margin-top:8px"><span id="batchMsg" class="sub" style="margin:0"></span></div>'
+   +'<div class="sub" style="margin-top:6px">共 '+BATCH_ROWS.length+' 条：待导入 <b>'+ok+'</b> · 已导入过 <b>'+dup+'</b> · 失败 <b>'+bad+'</b>（失败的自动跳过，不影响其他）</div>'
+   +'<div class="tips" style="margin-top:8px">「剧名」会显示在媒体库和飞牛影视里，可逐条改；「分类」支持两级，能选已有的，也能点「➕ 新建」现场加；点文件数可以展开、取消不想收录的集。选错了不用重来——导入后到下方分享列表点这行的「分类」随时改。</div>';
+
+  box.innerHTML=h;
+}
+
+function batchAdd(){
+  var items=[];
+  BATCH_ROWS.forEach(function(r){
+    if(!r.ok||r.exists)return;
+    var ids=[];
+    (r.files||[]).forEach(function(f){if(r.sel[f.id])ids.push(f.id)});
+    if(!ids.length)return;
+    items.push({provider:r.provider,share_id:r.share_id,category:bCatOf(r),
+      title:(r.title||'').trim(),files:ids});
+  });
+  if(!items.length){toast('没有可导入的分享（检查是不是都已在库里，或文件全被取消勾选）');return}
+  var msg=$('batchMsg');
+  if(msg)msg.innerHTML='<span class="spin"></span>导入中：共 '+items.length+' 个分享…';
+  fetch('/api/share/batch/add',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({items:items,auto_refresh:($('ckAuto')?$('ckAuto').checked:true)})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(!d.ok){if(msg)msg.innerHTML='<span style="color:var(--danger)">'+esc(d.error||'导入失败')+'</span>';return}
+    var rows=d.rows||[];
+    rows.forEach(function(x){
+      BATCH_ROWS.forEach(function(r){
+        if(r.provider===x.provider&&r.share_id===x.share_id){
+          if(x.ok){r.exists=true;r.ok=true;}
+          else{r.ok=false;r.error=x.error||'失败';}
+        }
+      });
+    });
+    renderBatchRows();
+    var m=$('batchMsg');
+    if(m)m.innerHTML='完成：导入 <b>'+d.imported+'</b> 个分享，共 '+d.added+' 条';
+    toast('导入完成，共 '+d.added+' 条');
+    $('batchText').value='';
+    SHAREPAGE=1;loadShares(1);
+  }).catch(function(e){
+    if(msg)msg.innerHTML='<span style="color:var(--danger)">导入失败：'+esc(String(e))+'</span>';
+  });
+}
+// 判断文件是不是视频（和 Go 端 isVideo 对齐的简易版，仅用于预览过滤）
+function isVideoName(name){
+  var m=/\.([a-z0-9]+)$/i.exec(String(name||''));
+  if(!m)return false;
+  return ['mp4','mkv','avi','mov','wmv','flv','ts','m2ts','rmvb','rm','webm','mpg','mpeg','m4v','iso','3gp'].indexOf(m[1].toLowerCase())>=0;
+}
+
 // 分类两级树 {一级:{二级:1}}：来源 = 已导入条目 + 分享列表
 function catTree(){
   var tree={};
@@ -799,64 +1028,6 @@ function curCat(i1,i2,n1,n2){
   if(!v2)return v1;
   return v1+'/'+v2;
 }
-function fillCats(){
-  loadItems(function(){
-    if(!$('catSel1'))return;
-    fillCatSelects('catSel1','catSel2','catNew1','catNew2','');
-  });
-}
-function toggleAll(v){
-  if(!PARSED)return;
-  for(var i=0;i<SELMAP.length;i++)SELMAP[i]=v;
-  var cks=document.querySelectorAll('.ckF');
-  for(var i=0;i<cks.length;i++)cks[i].checked=v;
-  updSel();
-}
-function onCkF(el){
-  SELMAP[+el.getAttribute('data-i')]=el.checked;
-  updSel();
-}
-// 渲染解析结果（默认前 PARSELIMIT 条，其余折叠）
-function renderParseRows(){
-  if(!PARSED)return;
-  var box=$('parseRows'); if(!box)return;
-  var total=PARSED.files.length;
-  var n=PARSESHOWALL?total:Math.min(PARSELIMIT,total);
-  var h='';
-  for(var i=0;i<n;i++){
-    var f=PARSED.files[i];
-    h+='<tr><td><input type="checkbox" class="ckF" data-i="'+i+'"'+(SELMAP[i]?' checked':'')+' onchange="onCkF(this)"></td>'+
-       '<td class="brk">'+esc(f.path||f.name)+'</td><td class="num">'+humanSize(f.size)+'</td></tr>';
-  }
-  if(total>PARSELIMIT){
-    h+='<tr><td colspan="3" style="text-align:center;padding:12px;color:var(--mut);cursor:pointer;user-select:none" onclick="toggleParseAll()">'+
-       (PARSESHOWALL?'收起列表 ▴':'… 等 '+total+' 个视频，点击展开全部 ▾')+'</td></tr>';
-  }
-  box.innerHTML=h;
-}
-function toggleParseAll(){PARSESHOWALL=!PARSESHOWALL;renderParseRows();}
-function updSel(){
-  if(!PARSED)return;
-  var n=0;
-  for(var i=0;i<SELMAP.length;i++)if(SELMAP[i])n++;
-  $('selN').textContent='已选 '+n+' / '+PARSED.files.length+' 个';
-  var all=$('ckAll'); if(all)all.checked=(PARSED.files.length>0&&n===PARSED.files.length);
-}
-function doAdd(){
-  if(!PARSED)return;
-  var cat=curCat('catSel1','catSel2','catNew1','catNew2');
-  var showName=$('showName')?$('showName').value.trim():'';
-  if(!showName)showName=PARSED.title;
-  var files=[];
-  for(var i=0;i<PARSED.files.length;i++){if(SELMAP[i])files.push(PARSED.files[i])}
-  if(!files.length){toast('至少勾选一个文件');return}
-  fetch('/api/share/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    provider:PARSED.provider,title:showName,category:cat,auto_refresh:$('ckAuto').checked,pwd_id:PARSED.pwd_id,passcode:PARSED.passcode,files:files
-  })}).then(function(r){return r.json()}).then(function(d){
-    if(d.ok){toast('已加入 '+d.added+' 个文件');$('parseOut').innerHTML='';$('shareLink').value='';SHAREPAGE=1;loadShares(1);}
-    else toast(d.error||'添加失败');
-  });
-}
 // ---- 追更刷新 ----
 var SHAREPAGE=1, SHARESIZE=50, SHARETOTAL=0;
 function loadShares(page){
@@ -876,7 +1047,11 @@ function loadShares(page){
       // 显示「网盘/分类」（如 夸克/电视剧/国产剧），一眼看出这部在哪个盘
       var pvShort=pvLabel(s.provider||'');
       var catPath=pvShort?pvShort+'/'+cat:cat;
-      t+='<tr><td>'+esc(cleanShow(s.show_name))+'<div class="tmeta">'+esc(catPath)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
+      var warn='';
+      if(s.fail_count>0){
+        warn=' <span style="color:var(--danger);font-size:12px" title="'+esc(s.last_error||'')+'">⚠ 疑似失效 '+s.fail_count+' 轮</span>';
+      }
+      t+='<tr><td>'+esc(cleanShow(s.show_name))+warn+'<div class="tmeta">'+esc(catPath)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
         '<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>'+
         '<td><button class="mini" onclick="refreshShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+esc(s.passcode||'')+'\')">刷新</button> '+
         '<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类，以后追更出来的新剧集也归新分类">分类</button> '+
@@ -1727,108 +1902,6 @@ function tsImport(uid,sid){
     else toast(d.error||'收录失败');
   }).catch(function(){toast('收录失败')});
 }
-// ---- 批量导入：解析预览 → 每行调分类（或一键统一）→ 入库 ----
-var BATCH_ROWS=[];
-function batchSplit(text){
-  // 换行 / 分号 拆行；行首编号去掉；**从 http 开始截取**（丢掉前面的片名等中文）；
-  // 一行里粘了多条链接时也能拆开。这样「《成龙》70部…  https://…（访问码：xx11）」
-  // 只会把 URL 部分传给后端，片名不会干扰提取码解析。
-  var out=[];
-  String(text||'').split(/[\n\r;；]+/).forEach(function(line){
-    line=line.replace(/^\s*\d+[\.、．)）]\s*/,'');
-    var parts=line.split(/(?=https?:\/\/)/);
-    for(var i=0;i<parts.length;i++){
-      var k=parts[i].indexOf('http');
-      if(k<0)continue;
-      var u=parts[i].slice(k).trim();
-      if(u)out.push(u);
-    }
-  });
-  return out;
-}
-function batchParse(){
-  var links=batchSplit($('batchText').value);
-  if(!links.length){toast('没识别到链接，一行一条，带 http 开头');return}
-  $('batchOut').innerHTML='<span class="spin"></span>正在解析 '+links.length+' 条（大合集要几秒，串行跑，请稍等）…';
-  fetch('/api/share/batch/parse',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({links:links})})
-  .then(function(r){return r.json()}).then(function(d){
-    if(!d.ok){$('batchOut').innerHTML='<span style="color:var(--danger)">'+esc(d.error||'解析失败')+'</span>';return}
-    BATCH_ROWS=(d.rows||[]).map(function(r){r.category='';return r});
-    BATCH_ROWS.forEach(function(r,i){r.idx=i});
-    renderBatchRows();
-  }).catch(function(e){$('batchOut').innerHTML='<span style="color:var(--danger)">解析失败：'+esc(String(e))+'</span>'});
-}
-function renderBatchRows(){
-  var ok=0,dup=0,bad=0;
-  var h='<table style="width:100%;border-collapse:collapse;font-size:13px">'
-    +'<thead><tr style="text-align:left;color:var(--dim)">'
-    +'<th style="padding:6px 4px">分享</th><th style="padding:6px 4px;width:90px">网盘</th>'
-    +'<th style="padding:6px 4px;width:60px">视频</th><th style="padding:6px 4px;width:190px">分类（可改）</th>'
-    +'<th style="padding:6px 4px;width:110px">状态</th></tr></thead><tbody>';
-  BATCH_ROWS.forEach(function(r,i){
-    if(!r.ok){bad++} else if(r.exists){dup++} else {ok++}
-    h+='<tr style="border-top:1px solid var(--line)">'
-      +'<td style="padding:6px 4px">'+(r.title?esc(r.title):'<span class="cd">'+esc(String(r.link||'').slice(0,48))+'</span>')+'</td>'
-      +'<td style="padding:6px 4px">'+(PVCN[r.provider]||r.provider||'-')+'</td>'
-      +'<td style="padding:6px 4px">'+(r.count||0)+'</td>'
-      +'<td style="padding:6px 4px">';
-    if(r.ok && !r.exists){
-      h+='<input type="text" data-bi="'+i+'" value="" placeholder="留空=不分类" style="width:170px">';
-    }else{
-      h+='<span class="cd">-</span>';
-    }
-    h+='</td><td style="padding:6px 4px">';
-    if(!r.ok){h+='<span style="color:var(--danger)">'+esc(r.error||'失败')+'</span>';}
-    else if(r.exists){h+='<span class="cd">已导入过</span>';}
-    else {h+='<span style="color:var(--ok)">待导入</span>';}
-    h+='</td></tr>';
-  });
-  h+='</tbody></table>';
-  h+='<div class="row" style="margin-top:12px;gap:8px;align-items:center;flex-wrap:wrap">'
-    +'<span class="sub">统一分类</span>'
-    +'<input type="text" id="batchAllCat" placeholder="填这里后点右边，可覆盖每一行" style="width:200px">'
-    +'<button class="mini gray" onclick="batchApplyAll()">应用到全部</button>'
-    +'<button onclick="batchAdd()" style="margin-left:6px">开始导入</button>'
-    +'<span id="batchMsg" class="sub"></span></div>';
-  h+='<div class="sub" style="margin-top:8px">共 '+BATCH_ROWS.length+' 条：待导入 <b>'+ok+'</b> · 已导入 <b>'+dup+'</b> · 失败 <b>'+bad+'</b>（失败的跳过，不影响其他）</div>';
-  $('batchOut').innerHTML=h;
-}
-function batchApplyAll(){
-  var v=($('batchAllCat').value||'').trim();
-  var n=0;
-  var els=document.querySelectorAll('input[data-bi]');
-  for(var i=0;i<els.length;i++){els[i].value=v;n++;}
-  toast(n?('已把「'+(v||'不分类')+'」应用到 '+n+' 条'):'没有可设置的条目');
-}
-function batchAdd(){
-  var items=[];
-  var els=document.querySelectorAll('input[data-bi]');
-  for(var i=0;i<els.length;i++){
-    var el=els[i], idx=parseInt(el.getAttribute('data-bi'),10);
-    var r=BATCH_ROWS[idx]; if(!r)continue;
-    items.push({provider:r.provider,share_id:r.share_id,category:(el.value||'').trim()});
-  }
-  if(!items.length){toast('没有可导入的分享');return}
-  $('batchMsg').innerHTML='<span class="spin"></span>导入中，共 '+items.length+' 个分享…';
-  fetch('/api/share/batch/add',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({items:items,auto_refresh:true})})
-  .then(function(r){return r.json()}).then(function(d){
-    if(!d.ok){$('batchMsg').innerHTML='<span style="color:var(--danger)">'+esc(d.error||'导入失败')+'</span>';return}
-    var rows=d.rows||[];
-    BATCH_ROWS.forEach(function(r,i){
-      var hit=rows.filter(function(x){return x.provider===r.provider&&x.share_id===r.share_id})[0];
-      if(hit&&hit.ok){r.exists=true;r.ok=true;}
-      if(hit&&!hit.ok){r.ok=false;r.error=hit.error||'失败';}
-    });
-    renderBatchRows();
-    var m=$('batchMsg');
-    if(m)m.innerHTML='完成：导入 <b>'+d.imported+'</b> 个分享，共 '+d.added+' 条';
-    toast('导入完成，共 '+d.added+' 条');
-    loadShares();
-  }).catch(function(e){$('batchMsg').innerHTML='<span style="color:var(--danger)">导入失败：'+esc(String(e))+'</span>'});
-}
-
 // ---- 天翼订阅号：历史导入（后台慢跑 + 进度轮询） ----
 var TS_BF_TIMER=null,TS_BF_REFRESHED=false;
 function tsBackfill(uid){

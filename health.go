@@ -173,9 +173,15 @@ func healthCycle(store *Store, self string) healthState {
 			Provider: m.Provider, ShareID: m.ShareID, Show: m.Show,
 			Error: m.LastError, Fail: m.FailCount,
 		})
+		// 「分享里没有任何文件」是 API 明确返回的事实（不是网络抖动/限流），
+		// 一轮即可判定，不必等两轮 —— 否则用户要多等 3 小时才知道这剧废了。
+		limit := healthFailLimit
+		if strings.Contains(err.Error(), "分享里没有任何文件") {
+			limit = 1
+		}
 		log.Printf("[巡检] %s/%s 确认失效（第 %d/%d 轮）：%v",
-			m.Provider, m.Show, m.FailCount, healthFailLimit, err)
-		if m.FailCount >= healthFailLimit {
+			m.Provider, m.Show, m.FailCount, limit, err)
+		if m.FailCount >= limit {
 			dead = append(dead, m)
 		}
 	}
@@ -267,6 +273,9 @@ func shareGone(err error) bool {
 		"分享已失效", "分享地址已失效", "分享不存在", "取消分享", "分享已过期",
 		"分享内容不存在", "分享可能已失效", "链接不存在", "已被删除", "分享失效",
 		"审核屏蔽",
+		// 2026-10-21 补：分享里一个文件都没有（连 ISO 都没有）= 真空分享，该清理。
+		// 「只有 ISO」不在此列（会返回另一句带「只有 ISO 镜像」的错误），避免误删。
+		"分享里没有任何文件",
 	} {
 		if strings.Contains(s, k) {
 			return true
