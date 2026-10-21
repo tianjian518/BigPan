@@ -444,15 +444,20 @@ func (s *Store) AddBatch(list []Item) int {
 func (s *Store) Delete(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.items {
-		if s.items[i].ID == id {
-			s.items = append(s.items[:i], s.items[i+1:]...)
-			s.dirty = true
-			s.save()
-			return true
-		}
+	// 索引过期先重建，让下面 O(1) 定位（旧实现是 O(N) 线性扫描；
+	// 脏状态下两者同为 O(N)，干净状态下这里是 O(1)）
+	if s.dirty {
+		s.rebuildIndex()
+		s.dirty = false
 	}
-	return false
+	i, ok := s.idIdx[id]
+	if !ok {
+		return false
+	}
+	s.items = append(s.items[:i], s.items[i+1:]...)
+	s.dirty = true // 下标全部移位，下次读重建
+	s.save()
+	return true
 }
 
 // DeleteBatch 批量按 ID 删除：整批只拿一次写锁、只重建一次索引、只落盘一次。
@@ -503,6 +508,32 @@ func (s *Store) Update(id string, fn func(*Item)) bool {
 	s.dirty = true // Dir/Category 变了：路径索引与目录缓存都要重建
 	s.save()
 	return true
+}
+
+// UpdateBatch 批量原地修改：match 选中的条目逐个过 fn，整批只拿一次写锁、
+// 只重建一次索引、只落盘一次。返回修改条数。
+//
+// 【为什么需要】改分类（整季几百条换目录）老写法是逐条 Update：每条开头
+// rebuild-if-dirty、结尾置脏，下一条又触发一次全量重建 —— 300 集就是 300 次
+// （1 万库 × 6.4ms ≈ 2 秒，全卡在同步路径里）。批量版还能让读者看到
+// 「整批一起换」的原子效果，不会看到一半搬完的库。
+// match/fn 都在持写锁状态下调用，不要在里面做耗时 I/O。
+func (s *Store) UpdateBatch(match func(*Item) bool, fn func(*Item)) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for i := range s.items {
+		if !match(&s.items[i]) {
+			continue
+		}
+		fn(&s.items[i])
+		n++
+	}
+	if n > 0 {
+		s.dirty = true
+		s.save()
+	}
+	return n
 }
 
 func (s *Store) FindByName(name string) *Item {
@@ -654,15 +685,17 @@ func (s *Store) Shares() []ShareSummary {
 }
 
 // FindByPath 按虚拟盘完整路径查找条目（"夸克/剧名/文件.mkv"）。
+// FindByPath 按 FullPath 查条目（O(1) 走 fpIdx）。
+// 【2026-10-21 优化】老实现是持读锁线性扫描：追更刷新每个文件都调一次，
+// 50 集 × 1 万库 = 50 万次 FullPath() 字符串拼接，全卡在同步路径里。
+// 改为 readLockFresh + fpIdx，语义不变（同样返回命中条目的值拷贝）。
 func (s *Store) FindByPath(path string) *Item {
 	path = strings.Trim(path, "/")
-	s.mu.RLock()
+	s.readLockFresh()
 	defer s.mu.RUnlock()
-	for i := range s.items {
-		if s.items[i].FullPath() == path {
-			it := s.items[i]
-			return &it
-		}
+	if i, ok := s.fpIdx[path]; ok {
+		it := s.items[i]
+		return &it
 	}
 	return nil
 }

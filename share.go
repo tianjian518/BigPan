@@ -757,6 +757,7 @@ var refreshMu sync.Mutex
 // 显式传入的 category 优先。passcode 为空表示无提取码分享。
 func refreshShareOnce(store *Store, provider, shareID, passcode, category string) (show string, added, total int, err error) {
 	updated := 0 // 同名同路径但 file_id 变了（分享主重传），就地更新
+	var batch []Item // 新条目攒一批，循环结束后一次性入库（理由见循环末尾）
 	p := providerByName(provider)
 	if p == nil {
 		return "", 0, 0, fmt.Errorf("不支持的网盘: %s", provider)
@@ -834,7 +835,7 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 		if existTitles[name] {
 			continue // 同名但落在别的目录（分享主放了两份），只收第一份
 		}
-		store.Add(Item{
+		batch = append(batch, Item{
 			Title: name, Dir: dir,
 			Category: cat, Show: show,
 			Provider: provider, ShareID: shareID, Passcode: passcode,
@@ -843,6 +844,16 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 		})
 		existTitles[name] = true
 		added++
+	}
+	// 攒批入库：一次写锁、一次索引维护、一次落盘。
+	// 【为什么不再逐条 store.Add】Add 开头会 rebuild-if-dirty、结尾置脏，
+	// 循环里导一季 50 集就是 50 次全量索引重建 + 50 次快照 —— 库越大越肉
+	// （实测 333 条 0.25ms/次、1 万条 6.4ms/次、5 万条 33ms/次，
+	//  50 集的新剧在 1 万库上就要 320ms，全发生在追更/导入的同步路径里）。
+	// AddBatch 内部对追加本就做增量索引维护，语义与逐条 Add 完全一致
+	// （同路径覆盖、ID/入库时间不变）。
+	if len(batch) > 0 {
+		store.AddBatch(batch)
 	}
 	if updated > 0 {
 		log.Printf("[追更] %s/%s 重扫 %d 个视频，新增 %d 个，同步取链标识 %d 个", provider, show, total, added, updated)

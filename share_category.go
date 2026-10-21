@@ -103,26 +103,25 @@ func apiShareCategory(store *Store, self string) http.HandlerFunc {
 			return
 		}
 
-		items := store.List()
-		moved, show, passcode := 0, "", ""
-		for i := range items {
-			it := &items[i]
-			if it.Provider != req.Provider || it.ShareID != req.ShareID {
-				continue
+		// 整批换目录：一次拿锁、一次重建索引、一次落盘。
+		// （老写法逐条 Update：每条都触发一次全量索引重建，整季几百条时在盒子上很肉，
+		//  见 Store.UpdateBatch 注释。）
+		show, passcode := "", ""
+		moved := store.UpdateBatch(func(x *Item) bool {
+			if x.Provider != req.Provider || x.ShareID != req.ShareID {
+				return false
 			}
 			if show == "" {
-				show = it.Show
+				show = x.Show
 			}
 			if passcode == "" {
-				passcode = it.Passcode
+				passcode = x.Passcode
 			}
-			if store.Update(it.ID, func(x *Item) {
-				x.Category = newCat
-				x.Dir = itemDirWithCategory(x, newCat)
-			}) {
-				moved++
-			}
-		}
+			return true
+		}, func(x *Item) {
+			x.Category = newCat
+			x.Dir = itemDirWithCategory(x, newCat)
+		})
 		if moved == 0 {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "没有找到这个分享的条目（可能已全部删除）"})
 			return
