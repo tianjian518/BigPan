@@ -252,6 +252,7 @@ table tr:hover td{background:#f7f9fc}
 .modal.show .mbox{transform:none}
 .mtitle{font-size:16px;font-weight:700;display:flex;align-items:center;gap:10px}
 .mtitle .mi{width:30px;height:30px;border-radius:9px;background:var(--danger2);color:var(--danger);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mtitle .mi.ok{background:var(--pri2);color:var(--pri)}
 .mtitle .mi svg{width:16px;height:16px;stroke:currentColor}
 .mbody{color:var(--txt2);font-size:14px;margin:13px 0 20px;line-height:1.65;word-break:break-all;white-space:pre-wrap}
 .mfoot{display:flex;justify-content:flex-end;gap:10px}
@@ -527,6 +528,18 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     <div class="mbody" id="connBody" style="white-space:normal;text-align:left"></div>
   </div>
 </div>
+<div class="modal" id="askModal" onclick="if(event.target===this)closeAsk(false)">
+  <div class="mbox" style="max-width:400px">
+    <div class="mtitle" id="askTitle"></div>
+    <div class="mbody" style="margin-bottom:14px">
+      <input type="text" id="askInput" style="width:100%">
+    </div>
+    <div class="mfoot">
+      <button class="gray" id="askNo" onclick="closeAsk(false)">取消</button>
+      <button id="askYes" onclick="closeAsk(true)">确定</button>
+    </div>
+  </div>
+</div>
 <div class="player" id="player" onclick="if(event.target===this)closePlayer()">
   <div class="box">
     <div class="vwrap"><video id="pv" controls autoplay playsinline></video><div class="pvmsg" id="pvmsg"></div></div>
@@ -592,8 +605,31 @@ $('mYes').onclick=function(){var f=MOK;closeModal();if(f)f()};
 document.addEventListener('keydown',function(e){
   if(e.key!=='Escape')return;
   if($('modal').style.display==='flex')closeModal();
+  else if($('askModal').style.display==='flex')closeAsk(false);
   else if($('player').style.display==='flex')closePlayer();
 });
+// 输入型模态框：替代原生 prompt，和整体设计语言一致（Enter 确认 / Esc 取消 / 空值禁确认）
+var ASKOK=null;
+function askText(title,placeholder,cb){
+  $('askTitle').innerHTML='<span class="mi ok"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h4.2a2 2 0 0 1 1.5.7l1.3 1.5H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6m-3-3h6"/></svg></span>'+esc(title);
+  var inp=$('askInput');
+  inp.value='';inp.placeholder=placeholder||'';
+  $('askYes').disabled=true;
+  ASKOK=cb;
+  var m=$('askModal');m.style.display='flex';requestAnimationFrame(function(){m.classList.add('show')});
+  setTimeout(function(){inp.focus()},90);
+}
+function closeAsk(ok){
+  var f=ASKOK;ASKOK=null;
+  var m=$('askModal');
+  m.classList.remove('show');
+  setTimeout(function(){m.style.display='none'},200);
+  if(f)f(ok?$('askInput').value.trim():null);
+}
+$('askInput').oninput=function(){$('askYes').disabled=!this.value.trim()};
+$('askInput').onkeydown=function(e){
+  if(e.key==='Enter'){e.preventDefault();if(this.value.trim())closeAsk(true)}
+};
 
 // ---- 数据 ----
 function loadItems(cb){
@@ -768,14 +804,19 @@ function bTitle(i,el){BATCH_ROWS[i].title=el.value}
 function bCat1(i,el){
   var r=BATCH_ROWS[i],v=el.value;
   if(v==='__new1__'){
-    var n=(prompt('新建一级分类，如：电视剧 / 电影 / 动漫')||'').trim();
-    if(!n){el.value=r.cat1||'';return}
-    ensureCatOpt(el,n);el.value=n;r.cat1=n;r.cat2='';
-  }else{
-    var oldv=r.cat1;
-    r.cat1=v;
-    if(v!==oldv)r.cat2=''; // 换了一级，原来的二级不再适用
+    askText('新建一级分类','如：电视剧 / 电影 / 动漫',function(n){
+      if(!n){el.value=r.cat1||'';return} // 取消：下拉回原值
+      ensureCatOpt(el,n);el.value=n;r.cat1=n;r.cat2='';
+      bCat1Tail(i,r);
+    });
+    return;
   }
+  var oldv=r.cat1;
+  r.cat1=v;
+  if(v!==oldv)r.cat2=''; // 换了一级，原来的二级不再适用
+  bCat1Tail(i,r);
+}
+function bCat1Tail(i,r){
   if(!r.cat1)r.cat2='';
   var s2=document.getElementById('bc2_'+i);
   if(s2){s2.innerHTML=bCat2Opts(r.cat1,'')}
@@ -783,12 +824,13 @@ function bCat1(i,el){
 function bCat2(i,el){
   var r=BATCH_ROWS[i],v=el.value;
   if(v==='__new2__'){
-    var n=(prompt('新建二级分类，如：国产剧 / 欧美剧')||'').trim();
-    if(!n){el.value=r.cat2||'';return}
-    ensureCatOpt(el,n);el.value=n;r.cat2=n;
-  }else{
-    r.cat2=v;
+    askText('新建二级分类','如：国产剧 / 欧美剧',function(n){
+      if(!n){el.value=r.cat2||'';return}
+      ensureCatOpt(el,n);el.value=n;r.cat2=n;
+    });
+    return;
   }
+  r.cat2=v;
 }
 function bOpen(i){
   var r=BATCH_ROWS[i];if(!r)return;
@@ -819,15 +861,27 @@ function bApplyAll(){
   var v1=$('ball1'),v2=$('ball2');
   var c1=v1?v1.value:'',c2=v2?v2.value:'';
   if(c1==='__new1__'){
-    c1=(prompt('新建一级分类名称')||'').trim();
-    if(!c1){toast('没填名字，已取消');return}
-    ensureCatOpt(v1,c1);v1.value=c1;
+    askText('新建一级分类','如：电视剧 / 电影 / 动漫',function(n){
+      if(!n){toast('已取消');return}
+      ensureCatOpt(v1,n);v1.value=n;
+      bApplyAllGo(v2,n,c2);
+    });
+    return;
   }
+  bApplyAllGo(v2,c1,c2);
+}
+function bApplyAllGo(v2,c1,c2){
   if(c2==='__new2__'){
-    c2=(prompt('新建二级分类名称')||'').trim();
-    if(!c2){toast('没填名字，已取消');return}
-    ensureCatOpt(v2,c2);v2.value=c2;
+    askText('新建二级分类','如：国产剧 / 欧美剧',function(n){
+      if(!n){toast('已取消');return}
+      ensureCatOpt(v2,n);v2.value=n;
+      bApplyAllDo(c1,n);
+    });
+    return;
   }
+  bApplyAllDo(c1,c2);
+}
+function bApplyAllDo(c1,c2){
   if(!c1)c2='';
   var n=0;
   BATCH_ROWS.forEach(function(r){
