@@ -234,7 +234,7 @@ func tianyiResetClients() {
 // apiLoginStartTianyi 开始扫码：POST /api/login/tianyi/start
 func apiLoginStartTianyi(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		return
 	}
 	s, err := startTianyiQR()

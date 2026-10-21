@@ -366,7 +366,7 @@ func pollQR115(id string) (*qrSnapshot, error) {
 // apiLoginStart 开始扫码：POST /api/login/115/start
 func apiLoginStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		return
 	}
 	s, err := startQR115()
@@ -428,7 +428,7 @@ func apiLoginPoll(as *AccountStore) http.HandlerFunc {
 func apiAccountImport(as *AccountStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -528,7 +528,7 @@ func apiAccounts(as *AccountStore) http.HandlerFunc {
 		switch {
 		case rest == "" || rest == "/":
 			if r.Method != http.MethodGet {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 				return
 			}
 			// 不返回 Cookie 明文，只返回概要
@@ -545,7 +545,7 @@ func apiAccounts(as *AccountStore) http.HandlerFunc {
 			writeJSON(w, map[string]interface{}{"ok": true, "accounts": out})
 		default:
 			if r.Method != http.MethodDelete {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 				return
 			}
 			prov := rest[1:]

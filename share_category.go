@@ -84,7 +84,7 @@ func itemDirWithCategory(it *Item, newCat string) string {
 func apiShareCategory(store *Store, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {

@@ -330,7 +330,7 @@ func apiShareHealth(store *Store, self string) http.HandlerFunc {
 			st := healthCycle(store, self)
 			writeJSON(w, map[string]interface{}{"ok": true, "state": st})
 		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		}
 	}
 }

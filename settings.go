@@ -121,7 +121,7 @@ func apiSettings() http.HandlerFunc {
 			appSettingsMu.RUnlock()
 			writeJSON(w, map[string]interface{}{"ok": true, "settings": out})
 		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		}
 	}
 }

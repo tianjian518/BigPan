@@ -353,7 +353,7 @@ func mergeSharePwd(link, pwd string) string {
 func apiShareParse(as *AccountStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -481,7 +481,7 @@ func buildItemDir(provider, category, showName, filePath string) string {
 func apiShareAdd(store *Store, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -664,7 +664,7 @@ func apiShares(store *Store) http.HandlerFunc {
 func apiShareToggle(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -711,7 +711,7 @@ func apiShareToggle(store *Store) http.HandlerFunc {
 func apiShareDelete(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		// 路径：/api/shares/{provider}/{share_id}
@@ -867,7 +867,7 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 func apiShareRefresh(store *Store, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -970,7 +970,7 @@ func autoRefreshCycle(store *Store, self string) {
 func apiSharePurge(store *Store, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -1014,7 +1014,7 @@ func shareMetaFor(store *Store, provider, shareID string) ShareMeta {
 func apiShowDelete(store *Store, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {

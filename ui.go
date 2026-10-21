@@ -717,7 +717,7 @@ function loadHome(){
       t+='<tr><td>'+tag+'<a href="#" class="rowlk" onclick="gotShow(this);return false" data-show="'+escA(disp)+'" title="在媒体库中筛选：'+escA(disp)+'">'+esc(disp)+'</a><div class="tmeta">'+meta+'</div></td>'+
          '<td class="num">'+humanSize(a.size)+'</td><td class="tm">'+fmtTime(a.last)+'</td></tr>';
     });
-    if(!ITEMS.length)t+='<tr><td colspan="3" style="color:var(--mut);padding:16px 12px">还没有内容，先去「分享导入」粘贴一个链接。</td></tr>';
+    if(!ITEMS.length)t+='<tr><td colspan="3"><div class="empty" style="padding:26px 10px"><div class="ei">'+svgDoc()+'</div><b>还没有内容</b>先去「分享导入」粘贴一个链接</div></td></tr>';
     $('recent').innerHTML=t;
   });
 }
@@ -761,7 +761,7 @@ function batchParse(){
   fetch('/api/share/batch/parse',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({links:links,pwd:pwd})})
   .then(function(r){return r.json()}).then(function(d){
-    if(!d.ok){box.innerHTML='<div class="empty"><b>解析失败</b>'+esc(d.error||'')+'</div>';return}
+    if(!d.ok){box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>'+esc(d.error||'')+'</div>';return}
     BATCH_ROWS=(d.rows||[]).map(function(r){
       r.orig_title=r.title||'';
       r.cat1='';r.cat2='';r.open=false;
@@ -771,7 +771,7 @@ function batchParse(){
     // 分类下拉要用「已导入的条目 + 分享列表」拼出来的分类树
     loadItems(function(){renderBatchRows()});
   }).catch(function(e){
-    box.innerHTML='<div class="empty"><b>解析失败</b>网络错误：'+esc(String(e))+'</div>';
+    box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>网络错误：'+esc(String(e))+'</div>';
   });
 }
 
@@ -1874,7 +1874,7 @@ function loadTianyiSubs(){
   fetch('/api/tianyi/subs').then(function(r){return r.json()}).then(function(d){
     var arr=d.subs||[];TS_MAP={};
     if(!arr.length){
-      $('tsList').innerHTML='<tr><td style="color:var(--mut);padding:14px 0">还没有订阅号。把天翼 App 里资源号主页的分享链接粘到上面，点「添加订阅」。</td></tr>';
+      $('tsList').innerHTML='<tr><td colspan="3"><div class="empty" style="padding:26px 10px"><div class="ei">'+svgDoc()+'</div><b>还没有订阅号</b>把天翼 App 里资源号主页的分享链接粘到上面，点「添加订阅」</div></td></tr>';
       return;
     }
     var t='<tr><th>订阅号</th><th>状态</th><th style="width:250px;text-align:right">操作</th></tr>';

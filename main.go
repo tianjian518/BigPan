@@ -1294,7 +1294,7 @@ func apiItems(store *Store, self string) http.HandlerFunc {
 			store.Add(it)
 			writeJSON(w, map[string]interface{}{"ok": true, "size": size})
 		default:
-			http.Error(w, "不支持的方法", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		}
 	}
 }
@@ -1308,7 +1308,7 @@ func apiItemDelete(store *Store) http.HandlerFunc {
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/items/")
 		if r.Method != http.MethodDelete {
-			http.Error(w, "不支持的方法", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		if store.Delete(id) {

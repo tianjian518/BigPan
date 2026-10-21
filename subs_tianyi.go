@@ -390,7 +390,7 @@ func apiTianyiSubs(subs *tianyiSubStore) http.HandlerFunc {
 			subs.Put(e)
 			writeJSON(w, map[string]interface{}{"ok": true, "sub": e})
 		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		}
 	}
 }
@@ -436,7 +436,7 @@ func apiTianyiSubItem(subs *tianyiSubStore) http.HandlerFunc {
 			subs.Put(*e)
 			writeJSON(w, map[string]interface{}{"ok": true, "sub": e})
 		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		}
 	}
 }
@@ -499,7 +499,7 @@ func apiTianyiSubShares(store *Store, subs *tianyiSubStore) http.HandlerFunc {
 func apiTianyiSubImport(store *Store, subs *tianyiSubStore, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -552,7 +552,7 @@ func tianyiSubShareByID(cred *tianyiCred, userID string, shareID int64) (*tianyi
 func apiTianyiSubSync(store *Store, subs *tianyiSubStore, self string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
@@ -807,7 +807,7 @@ func apiTianyiSubBackfill(store *Store, subs *tianyiSubStore, self string) http.
 			}
 			writeJSON(w, map[string]interface{}{"ok": true, "job": tianyiBackfillJob.snapshot()})
 		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		}
 	}
 }
