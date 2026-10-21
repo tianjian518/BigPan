@@ -209,6 +209,11 @@ table tr:hover td{background:#f7f9fc}
 .chd .csub{font-size:12.5px;color:var(--mut)}
 .rowlk{color:var(--txt);text-decoration:none;font-weight:500}
 .rowlk:hover{color:var(--pri)}
+/* 追更列表剧名 → 网盘原分享外链：默认不花哨，hover 显主色 + 外链图标提亮 */
+.shlk{color:var(--txt);text-decoration:none;font-weight:500}
+.shlk:hover{color:var(--pri)}
+.shlk .eic{width:11px;height:11px;stroke-width:2.6;margin-left:3px;vertical-align:0;opacity:.5;transition:opacity .15s}
+.shlk:hover .eic{opacity:.95}
 @media(max-width:720px){
   .rowlk{display:inline-block;max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
   th,td{padding:8px 8px}
@@ -1161,7 +1166,11 @@ function loadShares(page){
       if(s.fail_count>0){
         warn=' <span style="color:var(--danger);font-size:12px" title="'+esc(s.last_error||'')+'">⚠ 疑似失效 '+s.fail_count+' 轮</span>';
       }
-      t+='<tr><td>'+esc(cleanShow(s.show_name))+warn+'<div class="tmeta">'+esc(catPath)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
+      // 剧名超链接到网盘原分享（新标签页打开）；反构不出链接的老数据退化成纯文本
+      var nm=s.share_url
+        ?'<a class="shlk" href="'+escA(s.share_url)+'" target="_blank" rel="noopener" title="跳到网盘查看原分享（新标签页打开）">'+esc(cleanShow(s.show_name))+'<svg class="eic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>'
+        :esc(cleanShow(s.show_name));
+      t+='<tr><td>'+nm+warn+'<div class="tmeta">'+esc(catPath)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
         '<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>'+
         '<td><button class="mini" onclick="refreshShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+esc(s.passcode||'')+'\')">刷新</button> '+
         '<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类，以后追更出来的新剧集也归新分类">分类</button> '+

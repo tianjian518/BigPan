@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -615,6 +616,37 @@ type ShareSummary struct {
 	ShowName  string `json:"show_name"`          // 剧名
 	Files     int    `json:"files"`
 	LastAdded string `json:"last_added"`
+	// ShareURL 反构出的原始分享链接，前端剧名超链接到网盘原页面用。
+	// 天翼的访问码没有 URL 参数位，落地页自行输入。
+	ShareURL string `json:"share_url,omitempty"`
+}
+
+// shareURL 由（网盘 + 分享ID + 提取码）反构原始分享链接。
+// 各家的输出格式与 parseXXXLink 接受的输入严格对应（见各家 provider 注释），
+// 保证「点链接能打开、把链接粘回来还能解析」。
+func shareURL(provider, shareID, passcode string) string {
+	if shareID == "" {
+		return ""
+	}
+	q := func(k, v string) string {
+		if v == "" {
+			return ""
+		}
+		return "?" + k + "=" + url.QueryEscape(v)
+	}
+	switch provider {
+	case "quark":
+		return "https://pan.quark.cn/s/" + shareID + q("pwd", passcode)
+	case "115":
+		return "https://115.com/s/" + shareID + q("password", passcode)
+	case "baidu":
+		return "https://pan.baidu.com/s/" + shareID + q("pwd", passcode)
+	case "tianyi":
+		return "https://cloud.189.cn/t/" + shareID
+	case "mobile139":
+		return "https://yun.139.com/shareweb/#/w/i/" + shareID + q("pwd", passcode)
+	}
+	return ""
 }
 
 // Shares 按（网盘 + 分享ID）聚合出已导入的分享清单。
@@ -679,6 +711,7 @@ func (s *Store) Shares() []ShareSummary {
 			Provider: kv[0], ShareID: kv[1],
 			Passcode: a.pass, Category: a.cat, ShowName: a.show,
 			Files: a.n, LastAdded: a.last,
+			ShareURL: shareURL(kv[0], kv[1], a.pass),
 		})
 	}
 	return out
