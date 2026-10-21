@@ -116,9 +116,9 @@ func TestApiShareCategory(t *testing.T) {
 	if n, err := buildSTRM(s, "http://192.168.1.10:8099", false); err != nil || n != 3 {
 		t.Fatalf("首次构建 n=%d err=%v", n, err)
 	}
-	oldPath := filepath.Join(strmRoot, "百度/国产剧/甲/第01集.strm")
-	newPath := filepath.Join(strmRoot, "百度/欧美剧/甲/第01集.strm")
-	other := filepath.Join(strmRoot, "百度/国产剧/乙/第01集.strm")
+	oldPath := filepath.Join(strmRoot, "百度/国产剧/甲/第01集.mp4.strm")
+	newPath := filepath.Join(strmRoot, "百度/欧美剧/甲/第01集.mp4.strm")
+	other := filepath.Join(strmRoot, "百度/国产剧/乙/第01集.mp4.strm")
 	if _, err := os.Stat(oldPath); err != nil {
 		t.Fatalf("旧路径应存在: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestApiShareCategoryTwoLevel(t *testing.T) {
 	if m := globalShares.Get("baidu", "s1"); m.Category != "电视剧/国产剧" {
 		t.Fatalf("追更登记没同步两级: %+v", m)
 	}
-	p2 := filepath.Join(strmRoot, "百度/电视剧/国产剧/甲/第01集.strm")
+	p2 := filepath.Join(strmRoot, "百度/电视剧/国产剧/甲/第01集.mp4.strm")
 	waitFile(p2, true)
 	if _, err := os.Stat(p2); err != nil {
 		t.Errorf("两级 .strm 路径应生成: %v", err)
@@ -255,7 +255,7 @@ func TestApiShareCategoryTwoLevel(t *testing.T) {
 	if it.Category != "电视剧/欧美剧" || it.Dir != "百度/电视剧/欧美剧/甲" {
 		t.Fatalf("换二级条目不对: %+v", it)
 	}
-	p3 := filepath.Join(strmRoot, "百度/电视剧/欧美剧/甲/第01集.strm")
+	p3 := filepath.Join(strmRoot, "百度/电视剧/欧美剧/甲/第01集.mp4.strm")
 	waitFile(p3, true)
 	if _, err := os.Stat(p3); err != nil {
 		t.Errorf("换二级后 .strm 路径应生成: %v", err)
