@@ -171,6 +171,11 @@ button.danger{background:#fff;color:var(--danger);border:1px solid #f0c4cd;box-s
 button.danger:hover{background:var(--danger2);border-color:var(--danger)}
 button:disabled{opacity:.45;cursor:default;transform:none}
 button.mini{padding:4.5px 12px;font-size:13.5px;border-radius:7px;font-weight:500;white-space:nowrap}
+/* 分页页码按钮：方形小按钮，当前页主色实底且禁用淡出要豁免 */
+.pgb{min-width:31px;padding:4.5px 8px;font-size:13px;border-radius:7px;text-align:center;font-variant-numeric:tabular-nums}
+.pgb.on,.pgb.on:disabled{background:var(--pri);color:#fff;border:0;box-shadow:0 1px 2px rgba(32,128,240,.3);font-weight:600;opacity:1;cursor:default}
+.pgb.on:hover{background:var(--pri)}
+.pgbdots{min-width:20px;text-align:center;color:var(--mut);font-size:13px;line-height:26px;user-select:none}
 button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--pri);outline-offset:1px}
 /* 复制小按钮：贴在 code 地址右侧 */
 .copybtn{display:inline-flex;align-items:center;gap:5px;margin-left:8px;padding:3px 11px;font-size:12.5px;font-weight:500;border-radius:7px;vertical-align:1px}
@@ -1132,13 +1137,25 @@ function loadShares(page){
   loadHealth();
 }
 // 追更列表分页条：几百上千条时只渲染当前页，DOM 不会被撑爆
+// 页码智能折叠：首末页常驻，当前页 ±2，中间省略号；当前页主色实底
 function renderSharePager(){
   var el=$('sharePager'); if(!el)return;
   var pages=Math.max(1,Math.ceil(SHARETOTAL/SHARESIZE));
   if(SHARETOTAL<=SHARESIZE){el.innerHTML='';return}
-  el.innerHTML='<span class="sub" style="margin:0">共 '+SHARETOTAL+' 个分享 · 第 '+SHAREPAGE+' / '+pages+' 页</span>'+
-    '<button class="mini gray" '+(SHAREPAGE<=1?'disabled':'')+' onclick="loadShares('+(SHAREPAGE-1)+')">上一页</button>'+
-    '<button class="mini gray" '+(SHAREPAGE>=pages?'disabled':'')+' onclick="loadShares('+(SHAREPAGE+1)+')">下一页</button>';
+  var h='<span class="sub" style="margin:0;margin-right:auto">共 '+SHARETOTAL+' 个分享 · 第 '+SHAREPAGE+' / '+pages+' 页</span>';
+  h+='<button class="pgb gray"'+(SHAREPAGE<=1?' disabled':'')+' title="上一页" onclick="loadShares('+(SHAREPAGE-1)+')">‹</button>';
+  var win=2,list=[];
+  for(var i=1;i<=pages;i++){
+    if(i===1||i===pages||(i>=SHAREPAGE-win&&i<=SHAREPAGE+win))list.push(i);
+    else if(list[list.length-1]!=='…')list.push('…');
+  }
+  for(var j=0;j<list.length;j++){
+    var p=list[j];
+    if(p==='…'){h+='<span class="pgbdots">…</span>';continue}
+    h+='<button class="pgb '+(p===SHAREPAGE?'on':'gray')+(p===SHAREPAGE?' disabled':'')+'" onclick="loadShares('+p+')">'+p+'</button>';
+  }
+  h+='<button class="pgb gray"'+(SHAREPAGE>=pages?' disabled':'')+' title="下一页" onclick="loadShares('+(SHAREPAGE+1)+')">›</button>';
+  el.innerHTML=h;
 }
 // ---- 分享失效巡检 ----
 function loadHealth(){
