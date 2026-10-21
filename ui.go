@@ -390,7 +390,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
   </div>
   <div class="main">
     <div id="pg-home" class="pg">
-      <div class="pagehd"><h2>概览</h2><span class="sub">文件始终在网盘里，不占你一点空间</span></div>
+      <div class="pagehd"><h2>概览</h2><span class="sub">直接播放分享链接，不占用网盘空间</span></div>
       <div class="stat" id="stats"></div>
       <div class="card"><div class="chd"><b>WebDAV 挂载地址</b><span class="csub">填进爆米花 / rclone 等客户端，可列目录、可读文件</span></div>
         <div class="row" style="margin-top:12px;align-items:center">
