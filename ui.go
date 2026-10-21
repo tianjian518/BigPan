@@ -185,7 +185,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 /* 搜索框（媒体库筛选） */
 .srch{position:relative;flex:1;min-width:170px;max-width:260px}
 .srch svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;stroke:#9aa1ad;pointer-events:none}
-.srch input{padding-left:34px}
+.srch input{padding-left:34px;padding-right:32px}
+/* 搜索框清空按钮：有内容才显示，Esc 同效 */
+.srchclr{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:21px;height:21px;padding:0;border:0;border-radius:50%;background:#e8eaef;color:var(--mut);font-size:15px;line-height:1;font-weight:400;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:none}
+.srchclr:hover{background:#d7dbe3;color:var(--txt2)}
+.srchclr.on{display:inline-flex}
 
 /* ============ 表格 ============ */
 table{width:100%;border-collapse:collapse}
@@ -429,7 +433,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <div class="pagehd">
         <h2>媒体库</h2>
         <span style="flex:1"></span>
-        <div class="srch"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="libQ" placeholder="搜索全部文件" oninput="onLibQ()"></div>
+        <div class="srch"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="libQ" placeholder="搜索全部文件" oninput="onLibQ()" onkeydown="onLibQKey(event)"><button type="button" class="srchclr" id="libQClr" title="清空搜索（Esc）" onclick="clearLibQ()">×</button></div>
         <button class="mini gray" id="refreshBtn" onclick="loadLib()">刷新</button>
         <button class="mini gray" id="viewBtn" onclick="toggleView()">网格视图</button>
       </div>
@@ -1292,6 +1296,10 @@ function svgFolder(){return '<svg class="fdi f" viewBox="0 0 24 24"><path d="M3 
 function svgVideo(){return '<svg class="fdi" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7.5 4v16M16.5 4v16M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21"/></svg>'}
 function svgDoc(){return '<svg class="fdi" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>'}
 function onLibQ(){clearTimeout(LIBT);LIBT=setTimeout(loadLib,250)}
+// 搜索框清空按钮的显隐：有内容才出现；loadLib/gotShow 都会经过这里同步
+function syncLibQClr(){var c=$('libQClr'),q=$('libQ');if(c)c.classList.toggle('on',!!(q&&q.value))}
+function clearLibQ(){var q=$('libQ');if(q)q.value='';syncLibQClr();clearTimeout(LIBT);loadLib();if(q)q.focus()}
+function onLibQKey(e){if(e.key==='Escape'){e.preventDefault();clearLibQ()}}
 function buildTree(){
   TREE={};
   ITEMS.forEach(function(it){
@@ -1336,6 +1344,7 @@ function dirShare(node){
 function goPath(p){ CURPATH=p||[]; SEL=[]; paintLib(); }
 function openLibPlayer(id){ openPlayer(id); }
 function loadLib(){
+  syncLibQClr();
   LIBQ=($('libQ')?$('libQ').value.trim().toLowerCase():'');
   $('libBox').innerHTML='<div class="loading"><span class="spin"></span>加载中…</div>';
   loadItems(function(){ buildTree(); paintLib(); });
