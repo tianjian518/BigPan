@@ -1376,7 +1376,7 @@ function renderLib(){
       '<td><span class="fv '+(vi?'play':'')+'" data-act="play">'+ (vi?svgVideo():svgDoc()) +'<b>'+esc(it.title)+'</b></span></td>'+
       '<td class="libsz">'+humanSize(it.size||0)+'</td>'+
       '<td class="libtm">'+fmtTime(it.added_at)+'</td>'+
-      '<td class="ops"><span class="acts"><button class="mini danger" data-act="del">删除</button></span></td>'+
+      '<td class="ops"><span class="acts">'+(vi?'<button class="mini" data-act="play">播放</button> ':'')+'<button class="mini danger" data-act="del">删除</button></span></td>'+
       '</tr>';
   });
   h+='</tbody></table>';
@@ -1396,7 +1396,7 @@ function renderFlat(hit){
       '<div class="tmeta">'+esc(path)+'</div></td>'+
       '<td class="libsz">'+humanSize(it.size||0)+'</td>'+
       '<td class="libtm">'+fmtTime(it.added_at)+'</td>'+
-      '<td class="ops"><span class="acts"><button class="mini danger" data-act="del">删除</button></span></td>'+
+      '<td class="ops"><span class="acts">'+(vi?'<button class="mini" data-act="play">播放</button> ':'')+'<button class="mini danger" data-act="del">删除</button></span></td>'+
       '</tr>';
   });
   h+='</tbody></table>';
