@@ -55,7 +55,14 @@ var (
 	flagHealth  = flag.Int("health", 180, "分享失效巡检间隔（分钟）：全量探测所有已导入分享，失效则删除条目与 STRM，0=关闭")
 )
 
+// httpClient 所有网盘 API 调用的公共客户端。
+//
+// 【必须有 Timeout】这里只用于 JSON 接口（校验提取码、列目录、取 dlink），
+// 不用于流式下载。曾经没有超时：百度接口一旦不响应（网络抖动、风控挂起），
+// 请求会永久阻塞，goroutine 只增不减 —— 在 2G 的盒子上很快就把内存和连接耗光。
+// 30 秒对任何 API 都足够（实测取链最慢 2~3 秒）。
 var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
 		ForceAttemptHTTP2:   true, // 夸克 CDN 要求 HTTP/2
 		MaxIdleConns:        256,

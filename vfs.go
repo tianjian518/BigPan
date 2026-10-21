@@ -57,6 +57,12 @@ var filenameReplacer = strings.NewReplacer(
 
 func safeFilename(s string) string {
 	s = filenameReplacer.Replace(strings.TrimSpace(s))
+	// 【防路径穿越】整个名字恰好是 "." 或 ".." 时，filepath.Join 会向上跳一级：
+	// 分享主把目录/标题命名成 ".." 时，STRM 会被写到父目录之外。
+	// 只处理这两种"整名"情况——"a..b" 这种中间含点的是正常文件名，不动。
+	if s == "." || s == ".." {
+		s = "_" + s
+	}
 	if s == "" {
 		s = "未命名"
 	}
@@ -329,11 +335,15 @@ func (f *remoteFile) Seek(offset int64, whence int) (int64, error) {
 }
 
 // webdavClient 用于回环调用本机加速引擎。
+// 【注意】这里不能用 Client.Timeout —— 它是「从发请求到读完响应体」的总时长，
+// 大文件 stream 会被硬掐断。只限制「等响应头」的时间：真的挂了 30 秒内必失败，
+// 正常拉流不受影响（响应头一到就交给 io.Copy 慢慢传）。
 var webdavClient = &http.Client{
 	Transport: &http.Transport{
-		MaxIdleConns:        64,
-		MaxIdleConnsPerHost: 64,
-		IdleConnTimeout:     90 * time.Second,
-		DisableCompression:  true,
+		MaxIdleConns:          64,
+		MaxIdleConnsPerHost:   64,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		DisableCompression:    true,
 	},
 }
