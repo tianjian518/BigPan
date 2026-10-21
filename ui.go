@@ -361,6 +361,10 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
   /* 分页条窄屏：信息条独占一行，页码按钮第二行右对齐；间距收紧保证一行装下 */
   #sharePager{flex-wrap:wrap;gap:6px;row-gap:8px}
   #sharePager .sub{flex-basis:100%;margin-right:0!important;text-align:left}
+  /* 巡检提示条窄屏：说明文字独占一行，提示文案与扫描按钮同行（按钮靠右） */
+  #healthTip > span:first-child{flex-basis:100%}
+  #healthTip > span:last-child{flex:1;min-width:0;order:2}
+  #healthTip > button{order:3}
   .selbar{left:12px;right:12px;bottom:12px;transform:translateY(14px);justify-content:center}
   .selbar.show{transform:translateY(0)}
 }
