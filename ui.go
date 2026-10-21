@@ -1020,7 +1020,7 @@ function batchAdd(){
     });
     renderBatchRows();
     var m=$('batchMsg');
-    if(m)m.innerHTML='完成：导入 <b>'+d.imported+'</b> 个分享，共 '+d.added+' 条';
+    if(m)m.innerHTML='<b style="color:var(--ok)">完成</b>：导入 <b>'+d.imported+'</b> 个分享，共 '+d.added+' 条';
     toast('导入完成，共 '+d.added+' 条');
     $('batchText').value='';
     SHAREPAGE=1;loadShares(1);
@@ -1894,7 +1894,7 @@ function loadTianyiSubs(){
     var t='<tr><th>订阅号</th><th>状态</th><th style="width:250px;text-align:right">操作</th></tr>';
     for(var i=0;i<arr.length;i++){
       var e=arr[i];TS_MAP[e.user_id]=e;
-      var st=(e.auto_import?'<b style="color:var(--ok)">自动收录</b>':'<span class="cd">仅手动</span>')+
+      var st=(e.auto_import?'<span class="tag ok">自动收录</span>':'<span class="tag off">仅手动</span>')+
         ' <span class="cd">已收 '+e.imported+' 个分享'+
         (e.last_sync&&e.last_sync.indexOf('0001')!==0?' · 上次同步 '+esc(e.last_sync.slice(0,16).replace('T',' ')):'')+'</span>'+
         (e.last_error?'<br><span class="cd" style="color:var(--danger)">'+esc(e.last_error)+'</span>':'');
