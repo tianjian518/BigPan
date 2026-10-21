@@ -1128,7 +1128,7 @@ function loadShares(page){
     }
     $('shareList').innerHTML=t;
     renderSharePager();
-  }).catch(function(){$('shareList').innerHTML='<tr><td colspan="5" style="color:var(--mut)">读取失败</td></tr>'});
+  }).catch(function(){$('shareList').innerHTML='<tr><td colspan="5"><div class="empty" style="padding:26px 10px"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>读取失败</b>网络不稳，点上面的「刷新」重试</div></td></tr>'});
   loadHealth();
 }
 // 追更列表分页条：几百上千条时只渲染当前页，DOM 不会被撑爆
@@ -1708,30 +1708,30 @@ function loadAccts(){
         var tv=map['quark_tv'];
         if(a&&tv){
           t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
-            '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">Cookie + 扫码（302）</span></td>'+
+            '<td><span class="tag ok">✓ 已连接</span> <span class="cd">Cookie + 扫码（302）</span></td>'+
             '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
         }else if(a){
           t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
-            '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">'+esc(a.label||'')+' · '+fmtTime(a.login_at)+'</span><br>'+
+            '<td><span class="tag ok">✓ 已连接</span> <span class="cd">'+esc(a.label||'')+' · '+fmtTime(a.login_at)+'</span><br>'+
             '<span class="cd" style="color:var(--warn)">再扫码登录一次，可解锁 302 直链播放</span></td>'+
             '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
         }else if(tv){
           t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
-            '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">扫码登录 · '+fmtTime(tv.login_at)+'</span><br>'+
+            '<td><span class="tag ok">✓ 已连接</span> <span class="cd">扫码登录 · '+fmtTime(tv.login_at)+'</span><br>'+
             '<span class="cd" style="color:var(--warn)">再导入 Cookie，分享转存才好用</span></td>'+
             '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
         }else{
           t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
-            '<td style="color:var(--mut)">未连接<span class="cd" style="margin-left:6px">播放取流前要连上</span></td>'+
+            '<td><span class="tag off">未连接</span><span class="cd" style="margin-left:6px">播放取流前要连上</span></td>'+
             '<td style="text-align:right"><button class="mini" onclick="openConn(\''+p.pv+'\')">连接</button></td></tr>';
         }
       }else if(a){
         t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
-          '<td><b style="color:var(--ok)">✓ 已连接</b> <span class="cd">'+esc(a.label||'')+' · '+fmtTime(a.login_at)+'</span></td>'+
+          '<td><span class="tag ok">✓ 已连接</span> <span class="cd">'+esc(a.label||'')+' · '+fmtTime(a.login_at)+'</span></td>'+
           '<td style="text-align:right"><button class="mini danger" onclick="delAcc(\''+p.pv+'\')">退出/换号</button></td></tr>';
       }else{
         t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
-          '<td style="color:var(--mut)">未连接<span class="cd" style="margin-left:6px">播放取流前要连上</span></td>'+
+          '<td><span class="tag off">未连接</span><span class="cd" style="margin-left:6px">播放取流前要连上</span></td>'+
           '<td style="text-align:right"><button class="mini" onclick="openConn(\''+p.pv+'\')">连接</button></td></tr>';
       }
     }
