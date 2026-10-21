@@ -173,9 +173,10 @@ button:disabled{opacity:.45;cursor:default;transform:none}
 button.mini{padding:4.5px 12px;font-size:13.5px;border-radius:7px;font-weight:500;white-space:nowrap}
 /* 分页页码按钮：方形小按钮，当前页主色实底且禁用淡出要豁免 */
 .pgb{min-width:31px;padding:4.5px 8px;font-size:13px;border-radius:7px;text-align:center;font-variant-numeric:tabular-nums}
-.pgb.on,.pgb.on:disabled{background:var(--pri);color:#fff;border:0;box-shadow:0 1px 2px rgba(32,128,240,.3);font-weight:600;opacity:1;cursor:default}
+.pgb.on,.pgb.on:disabled{background:var(--pri);color:#fff;border:1px solid var(--pri);box-shadow:0 1px 2px rgba(32,128,240,.3);font-weight:600;opacity:1;cursor:default}
 .pgb.on:hover{background:var(--pri)}
 .pgbdots{min-width:20px;text-align:center;color:var(--mut);font-size:13px;line-height:26px;user-select:none}
+#sharePager{gap:8px}
 button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--pri);outline-offset:1px}
 /* 复制小按钮：贴在 code 地址右侧 */
 .copybtn{display:inline-flex;align-items:center;gap:5px;margin-left:8px;padding:3px 11px;font-size:12.5px;font-weight:500;border-radius:7px;vertical-align:1px}
@@ -331,6 +332,35 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
   .lvt tbody tr.dirrow td.libsz,.lvt tbody tr.dirrow td.libtm{display:none}
   .lvt .ops .acts{opacity:1;gap:5px}
   .lvt .ops .acts .mini{padding:5px 11px;font-size:13px}
+  /* 追更表窄屏卡片化：撤掉固定列宽，剧名独占一行，文件数/时间/追更第二行，操作第三行右对齐 */
+  #shareList,#shareList tbody,#shareList tr{display:block;width:auto}
+  #shareList thead{display:none}
+  #shareList tbody tr{display:grid;grid-template-columns:auto auto 1fr auto;grid-template-areas:"nm nm nm nm" "fl tm tg tg" "op op op op";align-items:center;column-gap:10px;row-gap:6px;padding:11px 8px;border-bottom:1px solid var(--line2)}
+  #shareList tbody tr:last-child{border-bottom:0}
+  #shareList td{display:block;width:auto!important;padding:0;border:0;font-size:14px;min-width:0}
+  #shareList td:nth-child(1){grid-area:nm}
+  #shareList td:nth-child(2){grid-area:fl;font-size:12.5px;color:var(--mut);text-align:left;white-space:nowrap}
+  #shareList td:nth-child(3){grid-area:tm;font-size:12.5px;color:var(--mut);text-align:left}
+  #shareList td:nth-child(4){grid-area:tg;text-align:right}
+  #shareList td:nth-child(5){grid-area:op;text-align:right}
+  #shareList td:nth-child(5) .mini{margin:2px 0 2px 5px}
+  /* 批量预览表窄屏卡片化：剧名一行，网盘/文件/状态一行，两级分类各半行 */
+  #batchOut table,#batchOut tbody{display:block;width:auto}
+  #batchOut thead{display:none}
+  #batchOut tbody>tr:not([id]){display:grid;grid-template-columns:auto auto 1fr;grid-template-areas:"nm nm nm" "pv fl st" "c1 c2 c2";column-gap:8px;row-gap:6px;padding:9px 0;border-top:1px solid var(--line)}
+  #batchOut td{display:block;width:auto!important;padding:4px 0!important;border:0;font-size:13.5px;min-width:0}
+  #batchOut td:nth-child(1){grid-area:nm}
+  #batchOut td:nth-child(2){grid-area:pv}
+  #batchOut td:nth-child(3){grid-area:fl}
+  #batchOut td:nth-child(4){grid-area:c1}
+  #batchOut td:nth-child(5){grid-area:c2}
+  #batchOut td:nth-child(6){grid-area:st;text-align:right}
+  /* 展开的文件勾选区保持整行块级 */
+  #batchOut tr[id^="bf_"]{display:block}
+  #batchOut tr[id^="bf_"] td{display:block;width:auto!important;padding:0!important}
+  /* 分页条窄屏：信息条独占一行，页码按钮第二行右对齐；间距收紧保证一行装下 */
+  #sharePager{flex-wrap:wrap;gap:6px;row-gap:8px}
+  #sharePager .sub{flex-basis:100%;margin-right:0!important;text-align:left}
   .selbar{left:12px;right:12px;bottom:12px;transform:translateY(14px);justify-content:center}
   .selbar.show{transform:translateY(0)}
 }
@@ -401,7 +431,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <div class="card">
         <b style="font-size:14px">已导入的分享（追更）<span class="cd">一个分享链接 = 一部剧 / 一部电影 · 追更中的会自动收新剧集</span></b>
         <table id="shareList" style="margin-top:8px"></table>
-        <div id="sharePager" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px"></div>
+        <div id="sharePager" style="display:flex;align-items:center;justify-content:flex-end;margin-top:10px"></div>
         <div class="sub" style="margin:8px 0 0">分享主追更后新增了剧集，点「刷新」重扫目录树 —— 新文件自动入库，已入库的保持不变、路径绝不变化。</div>
         <div class="tips" style="margin:8px 0 0">行内按钮说明：<b>「刷新」</b>重扫这部剧有没有新剧集；<b>「分类」</b>事后补救——导入时分类选错了就在这里改，这部剧的所有文件会在媒体库里搬到新分类目录（已入库的剧集照常播放，不受影响），以后追更出来的新剧集也归到新分类；<b>「已失效」</b>分享挂了对它做失效清理；<b>「隐藏」</b>从列表拿掉但文件留在盘上。</div>
         <div class="sub" id="healthTip" style="margin:10px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
@@ -1116,7 +1146,7 @@ function loadShares(page){
     CATLIST=d.categories||[];
     // 删除/清理后当前页可能空了，自动回退一页
     if(!arr.length && SHAREPAGE>1){ loadShares(SHAREPAGE-1); return; }
-    var t='<tr><th>剧名</th><th style="width:70px;text-align:right">文件数</th><th style="width:118px;text-align:right">最近入库</th><th style="width:90px">追更</th><th style="width:284px;text-align:right">操作</th></tr>';
+    var t='<thead><tr><th>剧名</th><th style="width:70px;text-align:right">文件数</th><th style="width:118px;text-align:right">最近入库</th><th style="width:90px">追更</th><th style="width:284px;text-align:right">操作</th></tr></thead><tbody>';
     if(!arr.length)t+='<tr><td colspan=5><div class="empty" style="padding:30px 10px"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4.5-4.5M12 15 7.5 10.5"/><path d="M4 16.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5"/></svg></div><b>还没有导入过分享</b>粘贴一个网盘分享链接，几秒钟收进虚拟盘</div></td></tr>';
     for(var i=0;i<arr.length;i++){
       var s=arr[i];
@@ -1135,7 +1165,7 @@ function loadShares(page){
         '<button class="mini danger" onclick="purgeShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+s.files+')">已失效</button> '+
         '<button class="mini gray" onclick="delShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\')">隐藏</button></td></tr>';
     }
-    $('shareList').innerHTML=t;
+    $('shareList').innerHTML=t+'</tbody>';
     renderSharePager();
   }).catch(function(){$('shareList').innerHTML='<tr><td colspan="5"><div class="empty" style="padding:26px 10px"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>读取失败</b>网络不稳，点上面的「刷新」重试</div></td></tr>'});
   loadHealth();
@@ -1148,7 +1178,8 @@ function renderSharePager(){
   if(SHARETOTAL<=SHARESIZE){el.innerHTML='';return}
   var h='<span class="sub" style="margin:0;margin-right:auto">共 '+SHARETOTAL+' 个分享 · 第 '+SHAREPAGE+' / '+pages+' 页</span>';
   h+='<button class="pgb gray"'+(SHAREPAGE<=1?' disabled':'')+' title="上一页" onclick="loadShares('+(SHAREPAGE-1)+')">‹</button>';
-  var win=2,list=[];
+  // 窄屏窗口收窄到 ±1，保证一行装得下（桌面仍 ±2）
+  var win=(window.innerWidth&&window.innerWidth<=720)?1:2,list=[];
   for(var i=1;i<=pages;i++){
     if(i===1||i===pages||(i>=SHAREPAGE-win&&i<=SHAREPAGE+win))list.push(i);
     else if(list[list.length-1]!=='…')list.push('…');
