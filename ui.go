@@ -136,6 +136,10 @@ h2{font-size:21px;font-weight:700;letter-spacing:.2px}
 .stat .si svg{width:18px;height:18px;stroke:currentColor}
 .si.b{background:#e8f1ff;color:#1d6fd8}.si.p{background:#f1ebff;color:#7c3aed}
 .si.o{background:#fff3e2;color:#e8890c}.si.g{background:#e6f7ee;color:#18a058}
+/* 分盘明细卡：比总览卡弱一级（数字更小、留白更紧），9 张卡混排也分得清主次 */
+.stat .card.pv{padding:14px 14px 12px}
+.stat .card.pv b{font-size:22px}
+.stat .pvhd{flex-basis:100%;font-size:12px;color:var(--mut);padding:4px 2px 0;letter-spacing:.5px;font-weight:600}
 
 /* ============ 新用户引导（三步走） ============ */
 .guide{display:flex;gap:0;flex-wrap:wrap}
@@ -679,7 +683,13 @@ function loadHome(){
     var h='<div class="card"><div class="si b">'+ICO.film+'</div><b>'+ITEMS.length+'</b><span>个文件</span></div>';
     h+='<div class="card"><div class="si o">'+ICO.layers+'</div><b>'+n+'</b><span>部影片/剧集</span></div>';
     h+='<div class="card"><div class="si p">'+ICO.db+'</div><b>'+humanSize(total)+'</b><span>总容量</span></div>';
-    for(var p in byPv){h+='<div class="card"><div class="si g">'+ICO.db+'</div><b>'+byPv[p]+'</b><span>'+esc(pvLabel(p))+'</span></div>'}
+    var pvs=Object.keys(byPv);
+    if(pvs.length){
+      h+='<div class="pvhd">各网盘明细</div>';
+      pvs.sort(function(a,b){return byPv[b]-byPv[a]}).forEach(function(p){
+        h+='<div class="card pv"><div class="si g">'+ICO.db+'</div><b>'+byPv[p]+'</b><span>'+esc(pvLabel(p))+'</span></div>';
+      });
+    }
     $('stats').innerHTML=h;
     fetch('/api/shares').then(function(r){return r.json()}).then(function(d){
       var arr=(d.shares||[]).filter(function(s){return s.auto_refresh});
