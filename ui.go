@@ -258,7 +258,7 @@ table tr:hover td{background:#f7f9fc}
 .tag.off{background:#f2f4f8;color:#767d8c;border-color:var(--line)}
 .tag.err{background:var(--danger2);color:var(--danger);border-color:#f0c4cd}
 /* 设置页「网盘账号」：盘名放大一倍（12→24px），表格里一眼能认 */
-#accts .tag{font-size:24px;padding:5px 16px;border-radius:9px;line-height:1.3}
+#accts .tag{font-size:18px;padding:3.75px 12px;border-radius:7px;line-height:1.3}
 
 /* ============ 提示 / 弹层 ============ */
 .toast{position:fixed;top:26px;left:50%;transform:translate(-50%,-16px);background:rgba(28,32,38,.92);backdrop-filter:blur(6px);color:#fff;padding:11px 22px;border-radius:10px;opacity:0;transition:all .28s cubic-bezier(.2,.8,.3,1);pointer-events:none;z-index:99;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);border-left:3px solid var(--pri);max-width:82vw}
@@ -484,7 +484,6 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     <div id="pg-set" style="display:none">
       <div class="pagehd"><h2>设置</h2><span class="sub">网盘取流凭证与 STRM 导出</span></div>
       <div class="card"><b style="font-size:14px">网盘账号（取流凭证）<span class="cd">解析分享不需要账号；播放取流才需要，连一次就行</span></b>
-        <div class="sub" style="margin:8px 0 0">下面列着所有能连的网盘，连没连都标着呢。要连哪个就点它后面的「<b>连接</b>」，照着弹窗里的步骤做，一分钟连一个。换号：点「退出/换号」再连新的——旧凭证自动作废，百度的旧临时文件后台清理，不用重启。</div>
         <table id="accts" style="margin-top:10px"></table>
       </div>
       <div class="card">
