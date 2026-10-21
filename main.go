@@ -498,89 +498,6 @@ func truncUA(ua string) string {
 	return ua
 }
 
-// serveHeadFor 处理「302 直连」条目的 HEAD 请求。
-//
-// 关键：HEAD 必须和随后的 GET 说同一套话。
-// 早期为兼容天翼 CDN 不支持 HEAD，这里直接按扩展名本机答元数据
-// （Content-Type: video/x-matroska、Content-Length: 文件大小）；
-// 而 GET 走 302 到 CDN，CDN 实际回 application/octet-stream、甚至不给长度
-// （百度把大小放在 x-bs-file-size）。飞牛影视用 HEAD 的结果初始化播放器，
-// 两边对不上 —— 表现为「拉得到数据、播不出来」，请求序列里还会出现
-// 跳到文件末尾找 moov 的怪 Range。
-//
-// 现在：先解析直链，向 CDN 发一次 HEAD（自动跟随 302）：
-//   · CDN 回 2xx → 原样转发它的 Content-Type / 长度 / Accept-Ranges；
-//   · CDN 不支持 HEAD（天翼预签名 URL 回 403）→ 退回本机元数据，
-//     保证 Emby / Jellyfin 这类靠 HEAD 取大小的客户端仍然可用。
-func serveHeadFor(w http.ResponseWriter, r *http.Request, it *Item) {
-	if it == nil {
-		http.Error(w, "条目不存在", http.StatusNotFound)
-		return
-	}
-	ua := r.Header.Get("User-Agent")
-	if u, err := resolveDirectURL(it); err == nil && u != "" {
-		if req, rerr := http.NewRequest(http.MethodHead, u, nil); rerr == nil {
-			if ua != "" {
-				req.Header.Set("User-Agent", ua)
-			}
-			client := &http.Client{Timeout: 8 * time.Second}
-			if resp, derr := client.Do(req); derr == nil {
-				defer resp.Body.Close()
-				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-					h := w.Header()
-					if ct := resp.Header.Get("Content-Type"); ct != "" {
-						h.Set("Content-Type", ct)
-					}
-					if cl := resp.Header.Get("Content-Length"); cl != "" {
-						h.Set("Content-Length", cl)
-					} else if bs := resp.Header.Get("x-bs-file-size"); bs != "" {
-						h.Set("Content-Length", bs)
-					}
-					if ar := resp.Header.Get("Accept-Ranges"); ar != "" {
-						h.Set("Accept-Ranges", ar)
-					} else {
-						h.Set("Accept-Ranges", "bytes")
-					}
-					h.Set("Cache-Control", "private, max-age=60")
-					log.Printf("  [元数据] %s（%s）HEAD → 转发 CDN 真实响应（%s）",
-						it.FileName(), it.Provider, resp.Header.Get("Content-Type"))
-					w.WriteHeader(http.StatusOK)
-					return
-				}
-			}
-		}
-	}
-	// 兜底：CDN 不支持 HEAD 或解析失败，本机按扩展名答元数据。
-	serveHeadMeta(w, it, ua)
-}
-
-// serveHeadMeta 给 HEAD 请求直接答元数据（不回 302）。
-//
-// 为什么：天翼 CDN 的预签名 URL **不支持 HEAD**（返回 403 SignatureDoesNotMatch），
-// 而 Emby / 部分播放器开播前会先 HEAD 探大小，跟着 302 跳过去就 403 → 判定不可播。
-// HEAD 不传媒体数据，本机答一个 Content-Length 既不影响「数据不过本机」，
-// 又能让客户端顺利进入 GET（GET 仍然 302 到 CDN）。
-func serveHeadMeta(w http.ResponseWriter, it *Item, ua string) {
-	r0UA := ua
-	if it == nil {
-		http.Error(w, "条目不存在", http.StatusNotFound)
-		return
-	}
-	ct := "video/mp4"
-	if it.Ext != "" {
-		ct = videoContentType(it.Ext)
-	}
-	log.Printf("  [元数据] %s（%s）HEAD | UA=%q", it.FileName(), it.Provider, truncUA(r0UA))
-	h := w.Header()
-	h.Set("Accept-Ranges", "bytes")
-	h.Set("Content-Type", ct)
-	h.Set("Cache-Control", "private, max-age=60")
-	if it.Size > 0 {
-		h.Set("Content-Length", strconv.FormatInt(it.Size, 10))
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
 // directGuard 直链端点（STRM 用，同时兼容 WebDAV）。
 //
 // 两条路各管各的，互不干扰：
@@ -649,10 +566,6 @@ func directGuard(store *Store) http.Handler {
 						v.Set("size", fmt.Sprintf("%d", it.Size))
 					}
 					http.Redirect(w, r, "/play/"+url.PathEscape(it.FileName())+"?"+v.Encode(), http.StatusFound)
-					return
-				}
-				if r.Method == http.MethodHead {
-					serveHeadFor(w, r, it)
 					return
 				}
 				// 诊断：记录客户端真实特征（定位「网页版播放器卡顿」用）
@@ -728,10 +641,6 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 		// 家庭上行 20~50Mbps 根本扛不住 4K；302 = 手机直连电信 CDN，不占家里带宽。
 		// ?relay=1 可强制回到本机中转（排查 CDN 侧问题用）。
 		if it != nil && strings.EqualFold(it.Provider, "tianyi") && q.Get("relay") == "" {
-			if r.Method == http.MethodHead {
-				serveHeadFor(w, r, it) // HEAD：优先转发 CDN 真实响应，失败才本机答
-				return
-			}
 			u, uerr := resolveDirectURL(it)
 			if uerr != nil || u == "" {
 				// 天翼铁律：只走 302。解析失败宁可报错，也不把 4K 流量灌进本机/云服务器。
@@ -1221,10 +1130,6 @@ func davGuard(h http.Handler, store *Store, self string) http.Handler {
 			if vpath != "" && !strings.HasSuffix(vpath, "/") {
 				if it := store.FindByName(vpath); it != nil && it.IsShare() {
 					if p := providerByName(it.Provider); p != nil && p.Wants302() {
-						if r.Method == http.MethodHead {
-							serveHeadFor(w, r, it)
-							return
-						}
 						u, uerr := resolveDirectURL(it)
 						if uerr == nil {
 							log.Printf("  [302] %s（%s）→ 客户端直连网盘 CDN", it.FileName(), it.Provider)
