@@ -239,6 +239,10 @@ table tr:hover td{background:#f7f9fc}
 .tag{display:inline-flex;align-items:center;background:var(--pri2);color:var(--pri);border-radius:6px;font-size:12px;padding:2.5px 9px;font-weight:600;white-space:nowrap}
 .tag.q{background:#e8f1ff;color:#1d6fd8}.tag.n{background:#fff2e0;color:#d97706}.tag.b{background:#e8f1ff;color:#1d6fd8}
 .tag.m{background:#e6f7ee;color:#18a058}.tag.t{background:#e8f8fb;color:#0891b2}
+/* 状态徽章（批量导入表）：一眼分辨 待导入/已导入过/失败 */
+.tag.ok{background:#e6f7ee;color:#18a058;border-color:#bfe6cf}
+.tag.off{background:#f2f4f8;color:#767d8c;border-color:var(--line)}
+.tag.err{background:var(--danger2);color:var(--danger);border-color:#f0c4cd}
 /* 设置页「网盘账号」：盘名放大一倍（12→24px），表格里一眼能认 */
 #accts .tag{font-size:24px;padding:5px 16px;border-radius:9px;line-height:1.3}
 
@@ -941,9 +945,9 @@ function renderBatchRows(){
     }
     // 状态
     h+='<td style="padding:7px 4px">';
-    if(!r.ok){h+='<span style="color:var(--danger)">'+esc(r.error||'失败')+'</span>';}
-    else if(r.exists){h+='<span class="cd">已导入过</span>';}
-    else {h+='<span style="color:var(--ok)">待导入</span>';}
+    if(!r.ok){h+='<span class="tag err">失败</span><div class="cd" style="font-size:11px;margin-top:3px" title="'+escA(r.error||'')+'">'+esc(r.error||'')+'</div>';}
+    else if(r.exists){h+='<span class="tag off">已导入过</span>';}
+    else {h+='<span class="tag ok">待导入</span>';}
     h+='</td></tr>';
     // 展开的文件勾选行
     if(r.ok&&r.files&&r.files.length){
@@ -972,7 +976,7 @@ function renderBatchRows(){
    +'<button onclick="batchAdd()" style="margin-left:auto">开始导入</button>'
    +'</div>'
    +'<div class="row" style="margin-top:8px"><span id="batchMsg" class="sub" style="margin:0"></span></div>'
-   +'<div class="sub" style="margin-top:6px">共 '+BATCH_ROWS.length+' 条：待导入 <b>'+ok+'</b> · 已导入过 <b>'+dup+'</b> · 失败 <b>'+bad+'</b>（失败的自动跳过，不影响其他）</div>'
+   +'<div class="sub" style="margin-top:6px">共 '+BATCH_ROWS.length+' 条：待导入 <b style="color:var(--ok)">'+ok+'</b> · 已导入过 <b>'+dup+'</b> · 失败 <b style="color:var(--danger)">'+bad+'</b>（失败的自动跳过，不影响其他）</div>'
    +'<div class="tips" style="margin-top:8px">「剧名」会显示在媒体库和飞牛影视里，可逐条改；「分类」支持两级，能选已有的，也能点「➕ 新建」现场加；点文件数可以展开、取消不想收录的集。选错了不用重来——导入后到下方分享列表点这行的「分类」随时改。</div>';
 
   box.innerHTML=h;
