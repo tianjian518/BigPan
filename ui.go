@@ -516,7 +516,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <div class="card">
         <b style="font-size:14px">STRM 导出（媒体库用）<span class="cd">不用飞牛 / Emby 的话，这张卡可以完全不管</span></b>
         <table style="margin-top:8px">
-          <tr><td style="width:130px;color:var(--mut);vertical-align:top">输出目录</td><td><input id="strmDir" placeholder="留空 = 启动参数 -strm" style="width:100%"><br><small style="color:var(--mut)">容器内路径；必须和 docker 挂载对应</small></td></tr>
+          <tr><td style="width:130px;color:var(--mut);vertical-align:top">输出目录</td><td><input id="strmDir" placeholder="留空 = 启动参数 -strm" style="width:100%"><br><small style="color:var(--mut)">BigPan 实际写文件的目录：直接部署就填本机路径；Docker 部署填容器内路径（需与挂载对应）</small></td></tr>
           <tr><td style="color:var(--mut);vertical-align:top">对外地址</td><td><input id="strmBase" placeholder="留空 = 自动探测，如 http://192.168.1.10:8099" style="width:100%"><br><small style="color:var(--mut)">写进 .strm 的地址，客户端必须能访问到</small></td></tr>
           <tr><td style="color:var(--mut)">目录层级</td><td>
             <select id="strmLayout" style="padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fbfcfe">
