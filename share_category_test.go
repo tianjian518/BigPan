@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,7 +73,8 @@ func TestStoreUpdate(t *testing.T) {
 	if s.FindByName("百度/国产剧/甲/第01集.mp4") != nil {
 		t.Error("旧路径还能查到（索引没刷新）")
 	}
-	// 落盘：重开 Store 值还在
+	// 落盘：重开 Store 值还在（items.json 现为异步写，先刷盘）
+	s.Flush()
 	b, _ := os.ReadFile(p)
 	if !strings.Contains(string(b), "欧美剧") {
 		t.Error("修改未落盘")
@@ -116,9 +116,9 @@ func TestApiShareCategory(t *testing.T) {
 	if n, err := buildSTRM(s, "http://192.168.1.10:8099", false); err != nil || n != 3 {
 		t.Fatalf("首次构建 n=%d err=%v", n, err)
 	}
-	oldPath := filepath.Join(strmRoot, "百度/国产剧/甲/第01集.mp4.strm")
-	newPath := filepath.Join(strmRoot, "百度/欧美剧/甲/第01集.mp4.strm")
-	other := filepath.Join(strmRoot, "百度/国产剧/乙/第01集.mp4.strm")
+	oldPath := filepath.Join(strmRoot, "百度/国产剧/甲/第01集.strm")
+	newPath := filepath.Join(strmRoot, "百度/欧美剧/甲/第01集.strm")
+	other := filepath.Join(strmRoot, "百度/国产剧/乙/第01集.strm")
 	if _, err := os.Stat(oldPath); err != nil {
 		t.Fatalf("旧路径应存在: %v", err)
 	}
@@ -166,9 +166,10 @@ func TestApiShareCategory(t *testing.T) {
 		t.Error("另一部的 .strm 不该被动")
 	}
 	if b, _ := os.ReadFile(newPath); true {
-		// .strm 里的路径是 URL 转义的，先解码再比
-		u, err := url.PathUnescape(string(b))
-		if err != nil || !strings.Contains(u, "/direct/百度/欧美剧/甲/第01集.mp4") {
+		// 2026-10-21 起 .strm 用短地址 /direct/<条目ID>.<ext>?k=（原版同款，
+		// 避免超长中文路径触发播放器重试），这里只断言形态正确。
+		u := strings.TrimSpace(string(b))
+		if !strings.Contains(u, "/direct/") || !strings.Contains(u, "?k=") {
 			t.Errorf("新 .strm 内容不对: %s", b)
 		}
 	}
@@ -240,7 +241,7 @@ func TestApiShareCategoryTwoLevel(t *testing.T) {
 	if m := globalShares.Get("baidu", "s1"); m.Category != "电视剧/国产剧" {
 		t.Fatalf("追更登记没同步两级: %+v", m)
 	}
-	p2 := filepath.Join(strmRoot, "百度/电视剧/国产剧/甲/第01集.mp4.strm")
+	p2 := filepath.Join(strmRoot, "百度/电视剧/国产剧/甲/第01集.strm")
 	waitFile(p2, true)
 	if _, err := os.Stat(p2); err != nil {
 		t.Errorf("两级 .strm 路径应生成: %v", err)
@@ -254,7 +255,7 @@ func TestApiShareCategoryTwoLevel(t *testing.T) {
 	if it.Category != "电视剧/欧美剧" || it.Dir != "百度/电视剧/欧美剧/甲" {
 		t.Fatalf("换二级条目不对: %+v", it)
 	}
-	p3 := filepath.Join(strmRoot, "百度/电视剧/欧美剧/甲/第01集.mp4.strm")
+	p3 := filepath.Join(strmRoot, "百度/电视剧/欧美剧/甲/第01集.strm")
 	waitFile(p3, true)
 	if _, err := os.Stat(p3); err != nil {
 		t.Errorf("换二级后 .strm 路径应生成: %v", err)

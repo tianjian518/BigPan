@@ -329,6 +329,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <a data-p="home" class="on"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg><span>概览</span></a>
       <div class="grp">资源</div>
       <a data-p="import"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4.5-4.5M12 15 7.5 10.5"/><path d="M4 16.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5"/></svg><span>分享导入</span></a>
+      <a data-p="tianyi-sub"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H12l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5Z"/><path d="M8.5 8.5h7M8.5 11.5h4.5"/></svg><span>天翼订阅</span></a>
       <a data-p="lib"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7.5 4v16M16.5 4v16M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21"/></svg><span>媒体库</span></a>
       <div class="grp">系统</div>
       <a data-p="set"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h9M17.5 7.5H20M4 16.5h3M11.5 16.5H20"/><circle cx="15" cy="7.5" r="2.4"/><circle cx="9" cy="16.5" r="2.4"/></svg><span>设置</span></a>
@@ -370,6 +371,15 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     <div id="pg-import" style="display:none">
       <div class="pagehd"><h2>分享导入</h2><span class="sub">粘贴链接 → 按目录树收进虚拟盘 → 自动追更</span></div>
       <div class="card">
+        <div class="chd"><b>批量导入</b><span class="csub">一行一条链接，可混着粘；先解析预览，再逐行调分类（也支持一键统一）</span></div>
+        <textarea id="batchText" placeholder="https://cloud.189.cn/t/xxxx（访问码：abcd）&#10;https://pan.quark.cn/s/xxxx&#10;https://pan.baidu.com/s/xxxx?pwd=abcd" style="width:100%;height:110px;margin-top:10px;box-sizing:border-box;font-size:13px;line-height:1.6;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--fg)"></textarea>
+        <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
+          <button onclick="batchParse()">解析预览</button>
+          <span class="sub">支持 夸克 / 百度 / 115 / 移动 / 天翼，访问码跟在链接后面就行</span>
+        </div>
+        <div id="batchOut" style="margin-top:12px"></div>
+      </div>
+      <div class="card">
         <div class="row">
           <input type="text" id="shareLink" placeholder="粘贴分享链接，如 https://pan.quark.cn/s/xxxx" style="flex:1;min-width:220px">
           <input type="text" id="sharePwd" placeholder="提取码(选填)" style="width:130px">
@@ -384,6 +394,28 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <div class="sub" style="margin:8px 0 0">分享主追更后新增了剧集，点「刷新」重扫目录树 —— 新文件自动入库，已入库的保持不变、路径绝不变化。</div>
         <div class="tips" style="margin:8px 0 0">行内按钮说明：<b>「刷新」</b>重扫这部剧有没有新剧集；<b>「分类」</b>事后补救——导入时分类选错了就在这里改，这部剧的所有文件会在媒体库里搬到新分类目录（已入库的剧集照常播放，不受影响），以后追更出来的新剧集也归到新分类；<b>「已失效」</b>分享挂了对它做失效清理；<b>「隐藏」</b>从列表拿掉但文件留在盘上。</div>
         <div class="sub" id="healthTip" style="margin:10px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
+      </div>
+    </div>
+    <div id="pg-tianyi-sub" style="display:none">
+      <div class="pagehd"><h2>天翼订阅</h2><span class="sub">盯住资源号，新分享自动收进虚拟盘</span></div>
+      <div class="card">
+        <div class="chd"><b>添加订阅号</b><span class="csub">天翼 App → 订阅号主页 → 右上角分享 → 复制链接</span></div>
+        <div class="row" style="margin-top:12px">
+          <input type="text" id="tsLink" placeholder="粘贴订阅号链接（…?uuid=xxxx）或 32 位订阅号 ID" style="flex:1;min-width:240px">
+          <input type="text" id="tsCat" placeholder="收录到分类(选填)" style="width:160px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap"><input type="checkbox" id="tsAuto" checked>自动收录新分享</label>
+          <button onclick="addTianyiSub()">添加订阅</button>
+        </div>
+        <div class="sub" style="margin-top:8px">添加后只收<b>之后新发布</b>的分享，不会把历史上千条全导进来；想补收老的，点下面「浏览分享」手动挑。天翼订阅号接口<b>不需要登录</b>，没扫过码也能收。</div>
+      </div>
+      <div class="card">
+        <div class="chd"><b>已订阅</b><span class="csub">每 30 分钟自动检查一次新分享</span></div>
+        <div class="row" style="margin-top:10px;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="mini danger" id="tsBfStop" style="display:none" onclick="tsBfStop()">停止</button>
+          <span id="tsBfMsg" class="sub"></span>
+        </div>
+        <table id="tsList" style="margin-top:10px"></table>
+        <div id="tsShares" style="margin-top:16px"></div>
       </div>
     </div>
     <div id="pg-lib" style="display:none">
@@ -542,7 +574,7 @@ function cleanShow(s){
 }
 function toast(m){var t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('show')},2200)}
 function humanSize(n){if(!n||n<=0)return '0 B';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?2:0)+' '+u[i]}
-var PAGES=['home','import','lib','set'];
+var PAGES=['home','import','tianyi-sub','lib','set'];
 function nav(p){
   PAGES.forEach(function(x){
     var el=$('pg-'+x);
@@ -552,6 +584,7 @@ function nav(p){
   var as=document.querySelectorAll('.nav a');
   for(var i=0;i<as.length;i++){as[i].className=(as[i].getAttribute('data-p')===p?'on':'')}
   if(p==='home')loadHome(); if(p==='lib')loadLib(); if(p==='set')loadSet(); if(p==='import')loadShares();
+  if(p==='tianyi-sub'){loadTianyiSubs();tsBfPoll(false);}
 }
 (function(){var as=document.querySelectorAll('.nav a');for(var i=0;i<as.length;i++){as[i].onclick=function(){nav(this.getAttribute('data-p'))}}})();
 ['shareLink','sharePwd'].forEach(function(id){var el=$(id);if(el)el.addEventListener('keydown',function(e){if(e.key==='Enter')doParse()})});
@@ -1233,11 +1266,10 @@ function toggleView(){
   paintLib();
 }
 // ---- 播放 ----
-// 网页播放器只对夸克有意义（/play 中转，见备忘录 §23.30）。
-// 百度/移动/天翼按 302 铁律直连网盘，浏览器侧无解：百度按 UA 白名单拦截
-// （403 hit black userlist / hit illeage dlna）、移动只给 HLS m3u8、
-// 片源还常是 MKV/H.265。硬拼 /play 不仅必然失败，失败前还会把视频流量
-// 漏进服务器——所以直接给明确提示，别让用户对着黑屏转圈。
+// 网页播放器走 /play 本机中转。哪些网盘能进，见 openPlayer 里的 relayable：
+//   夸克、天翼 —— 可以；百度 —— 开了「浏览器代取」才可以；移动/115 —— 不行。
+// 早期（115/百度时代）这里一刀切只放夸克，天翼接进来后忘了放开，导致
+// 天翼条目点播放直接弹「不能在网页里播放」——2026-10-21 用户实测指出。
 var PVHINT=false;
 // 百度浏览器代取开关状态（设置页开关，影响网页播放器能否试播百度）
 var BAIDURELAY=false;
@@ -1252,12 +1284,18 @@ function openPlayer(id){
   if(!it)return;
   CURID=id;$('pvName').textContent=(it.dir?it.dir+'/':'')+(it.title||'')+(it.ext||'');
   $('player').style.display='flex';$('pvmsg').style.display='flex';
-  var relayable=it.provider==='baidu'&&BAIDURELAY;
+  // 哪些网盘能进网页播放器（走 /play 本机中转，见 handlePlay）：
+  //   夸克      —— 一直可以（TV 302 / 中转）
+  //   天翼      —— 直链支持 Range 且不绑会话，中转实测 206 正常（2026-10-21）
+  //   百度      —— 默认 302 会被拒，只有打开「浏览器代取」才走中转
+  //   移动/115  —— 只给 HLS/被封杀，不放开
+  var relayable=(it.provider==='baidu'&&BAIDURELAY)||it.provider==='tianyi';
   if(it.provider&&it.provider!=='quark'&&!it.url&&!relayable){
     PVHINT=true;
     $('pv').removeAttribute('src');try{$('pv').load()}catch(e){}
     var tip='<b>'+(PVCN[it.provider]||it.provider)+'不能在网页里播放</b><br><small>直链只认播放器，浏览器会被网盘拒绝，这是正常现象。<br>请用飞牛影视 / Emby 通过 STRM 或 WebDAV 观看，<br>或点上方「复制直链」给外部播放器使用。</small>';
     if(it.provider==='baidu')tip='<b>百度默认 302 直连，浏览器会被拒</b><br><small>到「设置」打开「百度浏览器代取」后就能试播（流量经过本机）。<br>MKV / H.265 这类片源浏览器本身解不了，还是用飞牛 / Emby 看。</small>';
+    if(it.provider==='mobile139')tip='<b>移动云盘只给 HLS(m3u8) 直链</b><br><small>浏览器不装 HLS 插件播不了，请用飞牛 / Emby 通过 STRM 或 WebDAV 观看。</small>';
     $('pvmsg').innerHTML=tip;
     return;
   }
@@ -1380,6 +1418,7 @@ var PV_LIST=[
   {pv:'quark',name:'夸克网盘'},
   {pv:'115',name:'115网盘'},
   {pv:'baidu',name:'百度网盘'},
+  {pv:'tianyi',name:'天翼云盘'},
   {pv:'mobile139',name:'移动云盘'}
 ];
 // 连接方式配置。methods：scan=扫码 / cookie=粘贴。
@@ -1404,6 +1443,10 @@ var PV_CONN={
     scanSteps:['打开手机<b>百度 App</b>（或百度网盘 App）→「扫一扫」','扫下面的码 → 手机上点<b>「确认登录」</b>','本页面自动变成「登录成功」'],
     cookiePh:'BDUSS，或整串 Cookie',
     steps:['电脑浏览器打开 <code>pan.baidu.com</code>，登录','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 复制请求头里的 <b>整串 Cookie</b>（只有 BDUSS 也行）','粘到下面框里，点「导入连接」']},
+  tianyi:{name:'天翼云盘',methods:['scan'],
+    scanStart:'/api/login/tianyi/start',scanPoll:'/api/login/tianyi/poll',
+    scanSteps:['打开手机上的<b>天翼云盘 App</b> → 右上角「+」→「扫一扫」','扫下面的码 → 手机上点<b>「确认登录」</b>','本页面自动变成「登录成功」'],
+    scanNote:'天翼是 accessToken 登录，<b>没有 Cookie 可粘，只能扫码</b>。token 有效期约 7 天，过期了再来扫一次就行。<b>解析分享不需要登录</b>，只有播放取流才要凭证。想订阅资源号自动收新片，去左边「<b>天翼订阅</b>」页。'},
   mobile139:{name:'移动云盘',methods:['cookie'],importApi:'/api/accounts/import',
     cookiePh:'Authorization 里 Basic 后面那串',
     steps:['电脑浏览器打开 <code>yun.139.com</code>，登录移动云盘','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 请求头里找 <b>Authorization</b>','复制 <code>Basic</code> 后面那一长串（整串粘也行）→ 点「导入连接」']}
@@ -1498,8 +1541,11 @@ function markConnTabs(){
 function connDone(m){
   var c=PV_CONN[CONN_PV];if(!c)return;
   CONN_DONE[m]=true;
-  if(m==='scan')ACCTS_MAP['quark_tv']={provider:'quark_tv'};
-  else ACCTS_MAP['quark']={provider:'quark'};
+  // 记到「当前网盘」的键上：夸克扫码记 quark_tv（与 Cookie 的 quark 分开存），
+  // 其他网盘扫码记自己的 provider —— 不能一律写 quark_tv，会污染夸克弹窗状态。
+  var scanKey=CONN_PV==='quark'?'quark_tv':CONN_PV;
+  if(m==='scan')ACCTS_MAP[scanKey]={provider:scanKey};
+  else ACCTS_MAP[CONN_PV]={provider:CONN_PV};
   updateConnBanner();
   if(c.needBoth&&!(CONN_DONE.scan&&CONN_DONE.cookie)){
     markConnTabs();
@@ -1592,6 +1638,240 @@ function delAcc(p){
       if(d.ok){toast(d.note||'已退出登录');loadSet();}else toast(d.error||'操作失败');
     });
   });
+}
+// ---- 天翼订阅号 ----
+var TS_MAP={},TS_CUR=null,TS_PAGE=1,TS_SIZE=50;
+function loadTianyiSubs(){
+  fetch('/api/tianyi/subs').then(function(r){return r.json()}).then(function(d){
+    var arr=d.subs||[];TS_MAP={};
+    if(!arr.length){
+      $('tsList').innerHTML='<tr><td style="color:var(--mut);padding:14px 0">还没有订阅号。把天翼 App 里资源号主页的分享链接粘到上面，点「添加订阅」。</td></tr>';
+      return;
+    }
+    var t='<tr><th>订阅号</th><th>状态</th><th style="width:250px;text-align:right">操作</th></tr>';
+    for(var i=0;i<arr.length;i++){
+      var e=arr[i];TS_MAP[e.user_id]=e;
+      var st=(e.auto_import?'<b style="color:var(--ok)">自动收录</b>':'<span class="cd">仅手动</span>')+
+        ' <span class="cd">已收 '+e.imported+' 个分享'+
+        (e.last_sync&&e.last_sync.indexOf('0001')!==0?' · 上次同步 '+esc(e.last_sync.slice(0,16).replace('T',' ')):'')+'</span>'+
+        (e.last_error?'<br><span class="cd" style="color:var(--danger)">'+esc(e.last_error)+'</span>':'');
+      t+='<tr><td><b>'+esc(e.name||e.user_id)+'</b><br><span class="cd">'+esc(e.user_id)+(e.category?' · 分类 '+esc(e.category):'')+'</span></td>'+
+        '<td>'+st+'</td>'+
+        '<td style="text-align:right;white-space:nowrap">'+
+        '<button class="mini gray" onclick="tsBrowse(\''+e.user_id+'\',1)">浏览分享</button> '+
+        '<button class="mini gray" onclick="tsBackfill(\''+e.user_id+'\')">导入历史</button> '+
+        '<button class="mini" onclick="tsSync(\''+e.user_id+'\')">立即同步</button> '+
+        '<button class="mini danger" onclick="tsDel(\''+e.user_id+'\')">删除</button></td></tr>';
+    }
+    $('tsList').innerHTML=t;
+  }).catch(function(){toast('加载订阅失败')});
+}
+function addTianyiSub(){
+  var link=$('tsLink').value.trim();
+  if(!link){toast('先粘贴订阅号链接或 ID');return}
+  fetch('/api/tianyi/subs',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({link:link,category:$('tsCat').value.trim(),auto_import:$('tsAuto').checked})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.ok){$('tsLink').value='';$('tsCat').value='';toast('已添加订阅：'+(d.sub.name||d.sub.user_id));loadTianyiSubs();}
+    else toast(d.error||'添加失败');
+  }).catch(function(){toast('网络错误，重试看看')});
+}
+function tsDel(uid){
+  var e=TS_MAP[uid]||{};
+  openModal('删除订阅','确定不再关注「'+(e.name||uid)+'」吗？\n\n只删订阅登记，已经收进媒体库的影片不受影响，照常播放。','删除',function(){
+    fetch('/api/tianyi/subs/'+encodeURIComponent(uid),{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){
+      if(d.ok){toast('已删除订阅');if(TS_CUR===uid)$('tsShares').innerHTML='';loadTianyiSubs();}else toast('删除失败');
+    });
+  });
+}
+function tsSync(uid){
+  toast('同步中…');
+  fetch('/api/tianyi/sub-sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:uid})})
+  .then(function(r){return r.json()}).then(function(d){
+    var r=(d.results||[])[0]||{};
+    if(r.error)toast('同步失败：'+r.error);
+    else toast('同步完成，新收录 '+r.imported+' 个分享');
+    loadTianyiSubs();
+    if(TS_CUR===uid)tsBrowse(uid,1);
+  }).catch(function(){toast('同步失败')});
+}
+function tsBrowse(uid,page){
+  TS_CUR=uid;TS_PAGE=page||1;
+  fetch('/api/tianyi/sub-shares?user_id='+encodeURIComponent(uid)+'&page='+TS_PAGE+'&size='+TS_SIZE)
+  .then(function(r){return r.json()}).then(function(d){
+    if(!d.ok){toast(d.error||'拉取失败');return}
+    var list=d.shares||[];
+    var t='<div class="chd" style="margin-bottom:8px"><b>'+esc((TS_MAP[uid]||{}).name||uid)+' 的分享</b><span class="csub">共 '+d.total+' 条 · 第 '+d.page+' 页</span></div>'+
+      '<table><tr><th>分享</th><th style="width:150px">发布时间</th><th style="width:130px">状态</th><th style="width:90px;text-align:right">操作</th></tr>';
+    if(!list.length)t+='<tr><td colspan="4" style="color:var(--mut)">没有更多了</td></tr>';
+    for(var i=0;i<list.length;i++){
+      var s=list[i];
+      var state=s.imported>0?'<b style="color:var(--ok)">已收录 '+s.imported+' 条</b>':(s.is_new?'<b style="color:var(--pri)">新的</b>':'<span class="cd">未收录</span>');
+      t+='<tr><td>'+esc(s.name)+(s.is_folder?'':' <span class="cd">单文件</span>')+'</td>'+
+        '<td class="cd">'+esc((s.share_date||'').slice(0,16))+'</td>'+
+        '<td>'+state+'</td>'+
+        '<td style="text-align:right"><button class="mini'+(s.imported>0?' gray':'')+'" onclick="tsImport(\''+uid+'\','+s.share_id+')">'+(s.imported>0?'重收':'收录')+'</button></td></tr>';
+    }
+    t+='</table><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">'+
+      (d.page>1?'<button class="mini gray" onclick="tsBrowse(\''+uid+'\','+(d.page-1)+')">上一页</button>':'')+
+      ((d.page*d.size<d.total)?'<button class="mini" onclick="tsBrowse(\''+uid+'\','+(d.page+1)+')">下一页</button>':'')+
+      '</div>';
+    $('tsShares').innerHTML=t;
+  }).catch(function(){toast('拉取失败')});
+}
+function tsImport(uid,sid){
+  toast('收录中，目录多的话要等一会儿…');
+  fetch('/api/tianyi/sub-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:uid,share_id:sid})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.ok){toast('已收录 '+(d.title||'')+'：'+d.added+' 条');tsBrowse(uid,TS_PAGE);}
+    else toast(d.error||'收录失败');
+  }).catch(function(){toast('收录失败')});
+}
+// ---- 批量导入：解析预览 → 每行调分类（或一键统一）→ 入库 ----
+var BATCH_ROWS=[];
+function batchSplit(text){
+  // 换行 / 分号 拆行；行首编号去掉；**从 http 开始截取**（丢掉前面的片名等中文）；
+  // 一行里粘了多条链接时也能拆开。这样「《成龙》70部…  https://…（访问码：xx11）」
+  // 只会把 URL 部分传给后端，片名不会干扰提取码解析。
+  var out=[];
+  String(text||'').split(/[\n\r;；]+/).forEach(function(line){
+    line=line.replace(/^\s*\d+[\.、．)）]\s*/,'');
+    var parts=line.split(/(?=https?:\/\/)/);
+    for(var i=0;i<parts.length;i++){
+      var k=parts[i].indexOf('http');
+      if(k<0)continue;
+      var u=parts[i].slice(k).trim();
+      if(u)out.push(u);
+    }
+  });
+  return out;
+}
+function batchParse(){
+  var links=batchSplit($('batchText').value);
+  if(!links.length){toast('没识别到链接，一行一条，带 http 开头');return}
+  $('batchOut').innerHTML='<span class="spin"></span>正在解析 '+links.length+' 条（大合集要几秒，串行跑，请稍等）…';
+  fetch('/api/share/batch/parse',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({links:links})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(!d.ok){$('batchOut').innerHTML='<span style="color:var(--danger)">'+esc(d.error||'解析失败')+'</span>';return}
+    BATCH_ROWS=(d.rows||[]).map(function(r){r.category='';return r});
+    BATCH_ROWS.forEach(function(r,i){r.idx=i});
+    renderBatchRows();
+  }).catch(function(e){$('batchOut').innerHTML='<span style="color:var(--danger)">解析失败：'+esc(String(e))+'</span>'});
+}
+function renderBatchRows(){
+  var ok=0,dup=0,bad=0;
+  var h='<table style="width:100%;border-collapse:collapse;font-size:13px">'
+    +'<thead><tr style="text-align:left;color:var(--dim)">'
+    +'<th style="padding:6px 4px">分享</th><th style="padding:6px 4px;width:90px">网盘</th>'
+    +'<th style="padding:6px 4px;width:60px">视频</th><th style="padding:6px 4px;width:190px">分类（可改）</th>'
+    +'<th style="padding:6px 4px;width:110px">状态</th></tr></thead><tbody>';
+  BATCH_ROWS.forEach(function(r,i){
+    if(!r.ok){bad++} else if(r.exists){dup++} else {ok++}
+    h+='<tr style="border-top:1px solid var(--line)">'
+      +'<td style="padding:6px 4px">'+(r.title?esc(r.title):'<span class="cd">'+esc(String(r.link||'').slice(0,48))+'</span>')+'</td>'
+      +'<td style="padding:6px 4px">'+(PVCN[r.provider]||r.provider||'-')+'</td>'
+      +'<td style="padding:6px 4px">'+(r.count||0)+'</td>'
+      +'<td style="padding:6px 4px">';
+    if(r.ok && !r.exists){
+      h+='<input type="text" data-bi="'+i+'" value="" placeholder="留空=不分类" style="width:170px">';
+    }else{
+      h+='<span class="cd">-</span>';
+    }
+    h+='</td><td style="padding:6px 4px">';
+    if(!r.ok){h+='<span style="color:var(--danger)">'+esc(r.error||'失败')+'</span>';}
+    else if(r.exists){h+='<span class="cd">已导入过</span>';}
+    else {h+='<span style="color:var(--ok)">待导入</span>';}
+    h+='</td></tr>';
+  });
+  h+='</tbody></table>';
+  h+='<div class="row" style="margin-top:12px;gap:8px;align-items:center;flex-wrap:wrap">'
+    +'<span class="sub">统一分类</span>'
+    +'<input type="text" id="batchAllCat" placeholder="填这里后点右边，可覆盖每一行" style="width:200px">'
+    +'<button class="mini gray" onclick="batchApplyAll()">应用到全部</button>'
+    +'<button onclick="batchAdd()" style="margin-left:6px">开始导入</button>'
+    +'<span id="batchMsg" class="sub"></span></div>';
+  h+='<div class="sub" style="margin-top:8px">共 '+BATCH_ROWS.length+' 条：待导入 <b>'+ok+'</b> · 已导入 <b>'+dup+'</b> · 失败 <b>'+bad+'</b>（失败的跳过，不影响其他）</div>';
+  $('batchOut').innerHTML=h;
+}
+function batchApplyAll(){
+  var v=($('batchAllCat').value||'').trim();
+  var n=0;
+  var els=document.querySelectorAll('input[data-bi]');
+  for(var i=0;i<els.length;i++){els[i].value=v;n++;}
+  toast(n?('已把「'+(v||'不分类')+'」应用到 '+n+' 条'):'没有可设置的条目');
+}
+function batchAdd(){
+  var items=[];
+  var els=document.querySelectorAll('input[data-bi]');
+  for(var i=0;i<els.length;i++){
+    var el=els[i], idx=parseInt(el.getAttribute('data-bi'),10);
+    var r=BATCH_ROWS[idx]; if(!r)continue;
+    items.push({provider:r.provider,share_id:r.share_id,category:(el.value||'').trim()});
+  }
+  if(!items.length){toast('没有可导入的分享');return}
+  $('batchMsg').innerHTML='<span class="spin"></span>导入中，共 '+items.length+' 个分享…';
+  fetch('/api/share/batch/add',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({items:items,auto_refresh:true})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(!d.ok){$('batchMsg').innerHTML='<span style="color:var(--danger)">'+esc(d.error||'导入失败')+'</span>';return}
+    var rows=d.rows||[];
+    BATCH_ROWS.forEach(function(r,i){
+      var hit=rows.filter(function(x){return x.provider===r.provider&&x.share_id===r.share_id})[0];
+      if(hit&&hit.ok){r.exists=true;r.ok=true;}
+      if(hit&&!hit.ok){r.ok=false;r.error=hit.error||'失败';}
+    });
+    renderBatchRows();
+    var m=$('batchMsg');
+    if(m)m.innerHTML='完成：导入 <b>'+d.imported+'</b> 个分享，共 '+d.added+' 条';
+    toast('导入完成，共 '+d.added+' 条');
+    loadShares();
+  }).catch(function(e){$('batchMsg').innerHTML='<span style="color:var(--danger)">导入失败：'+esc(String(e))+'</span>'});
+}
+
+// ---- 天翼订阅号：历史导入（后台慢跑 + 进度轮询） ----
+var TS_BF_TIMER=null,TS_BF_REFRESHED=false;
+function tsBackfill(uid){
+  var e=TS_MAP[uid]||{};
+  openModal('一键导入历史','把「'+(e.name||uid)+'」的全部历史分享，一条一条慢慢收进媒体库。\n\n中途可以点「停止」，下次再点会从断点接着跑，不会重复。分享多的话可能要跑一两个小时，点完就可以关掉页面。\n\n现在开始？','开始导入',function(){
+    fetch('/api/tianyi/sub-backfill',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:uid,max_shares:0,gap_ms:1000})})
+    .then(function(r){return r.json()}).then(function(d){
+      if(!d.ok){toast(d.error||'启动失败');return}
+      TS_BF_REFRESHED=false;
+      toast('已开始，后台慢慢跑，可以关页面');
+      tsBfPoll(true);
+    }).catch(function(){toast('启动失败')});
+  });
+}
+function tsBfStop(){
+  fetch('/api/tianyi/sub-backfill',{method:'DELETE'}).then(function(r){return r.json()}).then(function(){
+    toast('已请求停止：当前这条处理完就停，断点已保存');
+  }).catch(function(){});
+}
+function tsBfPoll(refreshOnFinish){
+  if(TS_BF_TIMER)return;
+  var tick=function(){
+    fetch('/api/tianyi/sub-backfill').then(function(r){return r.json()}).then(function(d){
+      var j=d.job||{},m=$('tsBfMsg'),sb=$('tsBfStop');
+      if(!m)return;
+      if(j.running){
+        if(sb)sb.style.display='';
+        m.innerHTML='导入中 '+j.done+'/'+j.total+' · 已收 '+j.imported+' 个分享（'+j.added+' 条）'+
+          (j.current?'<br>当前：'+esc(j.current):'');
+      }else{
+        if(sb)sb.style.display='none';
+        if(j.started&&String(j.started).indexOf('0001')!==0){
+          m.innerHTML='上次导入结束：处理 '+j.done+' 条，收录 '+j.imported+' 个分享（'+j.added+' 条）'+
+            (j.error?' · <span style="color:var(--danger)">'+esc(j.error)+'</span>':'');
+        }
+        if(TS_BF_TIMER){clearInterval(TS_BF_TIMER);TS_BF_TIMER=null;}
+        if(refreshOnFinish&&!TS_BF_REFRESHED){TS_BF_REFRESHED=true;loadTianyiSubs();}
+      }
+    }).catch(function(){});
+  };
+  tick();
+  TS_BF_TIMER=setInterval(tick,2000);
 }
 loadHome();
 loadRelayFlag();

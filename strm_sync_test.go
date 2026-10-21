@@ -34,7 +34,7 @@ func TestRebuildSTRMAsyncGenerates(t *testing.T) {
 
 	rebuildSTRMAsync(s, "http://192.168.1.10:8099", "测试")
 
-	want := filepath.Join(root, "百度/国产剧/甲/第01集.mp4.strm")
+	want := filepath.Join(root, "百度/国产剧/甲/第01集.strm")
 	for i := 0; i < 40; i++ {
 		time.Sleep(100 * time.Millisecond)
 		if b, err := os.ReadFile(want); err == nil {
@@ -55,7 +55,7 @@ func TestRebuildSTRMAsyncDisabled(t *testing.T) {
 	rebuildSTRMAsync(s, "http://192.168.1.10:8099", "测试")
 	time.Sleep(700 * time.Millisecond)
 
-	if _, err := os.Stat(filepath.Join(root, "百度/国产剧/甲/第01集.mp4.strm")); err == nil {
+	if _, err := os.Stat(filepath.Join(root, "百度/国产剧/甲/第01集.strm")); err == nil {
 		t.Fatal("AutoRebuild=false 仍生成了 STRM")
 	}
 }

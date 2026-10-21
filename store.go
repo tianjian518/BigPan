@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -39,6 +40,15 @@ type Item struct {
 	// TVFID 转存到「自己盘」后的文件 fid（夸克 TV 接口只认自己盘的文件）。
 	// 播过一次就有；被 sweeper 清掉后取链失败会自动重转存，用户无感。
 	TVFID string `json:"tv_fid,omitempty"`
+
+	// —— 天翼云盘专用字段 ——
+	// ShareNumID 天翼分享的数字 shareId。GetFileDownload 取链时要用；
+	// 解析分享时一并入库，播放时不必再调 GetShareInfo 换 shareId。
+	// 订阅号收录的分享没有 shareCode，播放全靠这个字段。
+	ShareNumID string `json:"share_num_id,omitempty"`
+	// SubUserID 天翼订阅号收录的条目会记下 UP 主 ID（普通链接导入为空）。
+	// 这类条目不进「分享列表」（它们由订阅号面板统一管理、刷新）。
+	SubUserID string `json:"sub_user_id,omitempty"`
 
 	// 静态直链（兼容：手动填 URL 的老用法）
 	URL string `json:"url,omitempty"`
@@ -143,6 +153,18 @@ type Store struct {
 	items []Item
 	dirty bool // 索引是否过期（Add/Delete 后置位）
 
+	// —— 落盘（异步合并）——
+	// 病历（2026-10-21）：盒子 eMMC 写速仅 2.7MB/s，items.json 涨到 858KB 后
+	// 一次全量写要 ~0.3s。批量导入/删除会连续触发几百次写，且旧实现是「持写锁
+	// 写盘」——PROPFIND 全部排队，实测从 4ms 涨到 9s 再到超时，客户端报
+	// 「WebDAV 连不上」（CPU 0%、内存正常，纯锁等待）。
+	// 现在：锁内只 marshal（毫秒级），写盘交给单个后台协程，短时间多次变更合并
+	// 成一次写，并先写临时文件再 rename（避免写一半断电留个坏 JSON）。
+	saveQ     chan struct{}
+	pendingMu sync.Mutex
+	pending   []Item
+	lastN     int64 // 上次落盘时的条目数（用来决定合并窗口）
+
 	// —— 索引（dirty 时由 rebuildIndex 重建，持写锁访问）——
 	fpIdx      map[string]int            // FullPath → items 下标
 	fnIdx      map[string][]int          // FileName → items 下标（兼容裸名匹配）
@@ -158,7 +180,7 @@ type childrenEntry struct {
 }
 
 func NewStore(path string) (*Store, error) {
-	s := &Store{path: path}
+	s := &Store{path: path, saveQ: make(chan struct{}, 1)}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
@@ -170,6 +192,7 @@ func NewStore(path string) (*Store, error) {
 		}
 	}
 	s.dirty = true // 首次读时建索引
+	go s.saveLoop()
 	return s, nil
 }
 
@@ -275,12 +298,70 @@ func (s *Store) rebuildIndex() {
 	}
 }
 
+// save 调度落盘（调用方必须持写锁）。
+//
+// 锁内只做一次切片快照（1461 条约 0.1ms），marshal 与磁盘写全交给后台协程。
+// 旧实现是「持写锁 marshal + 全量写盘」，在 2.7MB/s 的 eMMC 上一次要 0.3s，
+// 批量增删时 WebDAV 的 PROPFIND 全排在这后面 → 客户端报「连不上」。
+// saveQ 容量 1 + 非阻塞投递 = 天然合并：写盘期间再来 N 次变更，只留最新快照。
 func (s *Store) save() {
-	b, err := json.MarshalIndent(s.items, "", "  ")
+	snap := make([]Item, len(s.items))
+	copy(snap, s.items)
+	s.pendingMu.Lock()
+	s.pending = snap
+	s.pendingMu.Unlock()
+	select {
+	case s.saveQ <- struct{}{}:
+	default: // 已有待写任务，后台会把最新快照一起写掉
+	}
+}
+
+// saveLoop 后台落盘：合并短时间内的多次变更，先写临时文件再 rename。
+func (s *Store) saveLoop() {
+	for range s.saveQ {
+		// 合并窗口：批量导入/删除会在几十毫秒内触发上百次 save，
+		// 等这一下就能只写一次盘。库越大（JSON 越大），marshal+写盘越久，
+		// 窗口同步拉长，避免「刚写完又立刻重写」把 eMMC 打满。
+		time.Sleep(storeSaveDelay(int(atomic.LoadInt64(&s.lastN))))
+		s.pendingMu.Lock()
+		snap := s.pending
+		s.pending = nil
+		s.pendingMu.Unlock()
+		if snap == nil {
+			continue
+		}
+		atomic.StoreInt64(&s.lastN, int64(len(snap)))
+		s.writeSnapshot(snap)
+	}
+}
+
+// writeSnapshot 一次原子落盘（临时文件 + rename，避免写一半断电留坏 JSON）。
+func (s *Store) writeSnapshot(snap []Item) {
+	b, err := json.Marshal(snap)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(s.path, b, 0644)
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, s.path)
+}
+
+// Flush 把待写数据立即落盘（退出前调用，避免丢最后一批变更）。
+func (s *Store) Flush() {
+	s.pendingMu.Lock()
+	snap := s.pending
+	s.pending = nil
+	s.pendingMu.Unlock()
+	if snap == nil {
+		// 没有待写快照时也补一次，保证内存与磁盘一致（例如刚启动就退出）
+		s.mu.RLock()
+		snap = make([]Item, len(s.items))
+		copy(snap, s.items)
+		s.mu.RUnlock()
+	}
+	s.writeSnapshot(snap)
 }
 
 func (s *Store) List() []Item {
@@ -372,6 +453,37 @@ func (s *Store) Delete(id string) bool {
 		}
 	}
 	return false
+}
+
+// DeleteBatch 批量按 ID 删除：整批只拿一次写锁、只重建一次索引、只落盘一次。
+// 删除整季剧集（几百条）时，逐条 Delete 会做几百次索引重建 + 几百次快照，
+// 在盒子上实测 337 条要 3.2s；批量版是毫秒级。
+func (s *Store) DeleteBatch(ids []string) int {
+	if len(ids) == 0 {
+		return 0
+	}
+	del := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		del[id] = struct{}{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.items[:0]
+	n := 0
+	for _, it := range s.items {
+		if _, ok := del[it.ID]; ok {
+			n++
+			continue
+		}
+		kept = append(kept, it)
+	}
+	if n == 0 {
+		return 0
+	}
+	s.items = kept
+	s.dirty = true
+	s.save()
+	return n
 }
 
 // Update 按 ID 原地修改条目（改分类/搬目录用）：ID 与入库时间不变，
@@ -491,6 +603,9 @@ func (s *Store) Shares() []ShareSummary {
 		if it.Provider == "" || it.ShareID == "" || it.Dir == "" {
 			continue
 		}
+		if it.SubUserID != "" {
+			continue // 订阅号收录的条目不进分享列表（由天翼订阅号面板管理）
+		}
 		key := it.Provider + "|" + it.ShareID
 		a := m[key]
 		if a == nil {
@@ -550,4 +665,20 @@ func (s *Store) FindByPath(path string) *Item {
 		}
 	}
 	return nil
+}
+
+// storeSaveDelay 按库大小决定合并窗口。
+// 小库（几百条）120ms 足够；几万条时 JSON 几十 MB，marshal + eMMC 写要好几秒，
+// 窗口必须拉长，否则会连续重写同一份大文件。
+func storeSaveDelay(n int) time.Duration {
+	switch {
+	case n > 50000:
+		return 3 * time.Second
+	case n > 20000:
+		return 1500 * time.Millisecond
+	case n > 8000:
+		return 500 * time.Millisecond
+	default:
+		return 120 * time.Millisecond
+	}
 }

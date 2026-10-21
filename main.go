@@ -24,10 +24,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/webdav"
@@ -487,6 +490,41 @@ func apiLink(store *Store) http.HandlerFunc {
 	}
 }
 
+// truncUA 截断 UA，日志里能认出客户端就行。
+func truncUA(ua string) string {
+	if len(ua) > 48 {
+		return ua[:48]
+	}
+	return ua
+}
+
+// serveHeadMeta 给 HEAD 请求直接答元数据（不回 302）。
+//
+// 为什么：天翼 CDN 的预签名 URL **不支持 HEAD**（返回 403 SignatureDoesNotMatch），
+// 而 Emby / 部分播放器开播前会先 HEAD 探大小，跟着 302 跳过去就 403 → 判定不可播。
+// HEAD 不传媒体数据，本机答一个 Content-Length 既不影响「数据不过本机」，
+// 又能让客户端顺利进入 GET（GET 仍然 302 到 CDN）。
+func serveHeadMeta(w http.ResponseWriter, it *Item, ua string) {
+	r0UA := ua
+	if it == nil {
+		http.Error(w, "条目不存在", http.StatusNotFound)
+		return
+	}
+	ct := "video/mp4"
+	if it.Ext != "" {
+		ct = videoContentType(it.Ext)
+	}
+	log.Printf("  [元数据] %s（%s）HEAD | UA=%q", it.FileName(), it.Provider, truncUA(r0UA))
+	h := w.Header()
+	h.Set("Accept-Ranges", "bytes")
+	h.Set("Content-Type", ct)
+	h.Set("Cache-Control", "private, max-age=60")
+	if it.Size > 0 {
+		h.Set("Content-Length", strconv.FormatInt(it.Size, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // directGuard 直链端点（STRM 用，同时兼容 WebDAV）。
 //
 // 两条路各管各的，互不干扰：
@@ -535,6 +573,15 @@ func directGuard(store *Store) http.Handler {
 				name = dec
 			}
 			it := store.FindByName(name)
+			if it == nil {
+				// 短地址形态：/direct/<条目ID>（见 strm.go itemPlayURL）。
+				// 兼容三种历史写法：纯 ID、ID.ext、完整虚拟路径。
+				if got := store.FindByID(name); got != nil {
+					it = got
+				} else if i := strings.LastIndex(name, "."); i > 0 {
+					it = store.FindByID(name[:i])
+				}
+			}
 			if it != nil {
 				// 夸克 + 开关关着：分享直链绑登录会话，客户端直连会被 412 拒，
 				// 不能 302 —— 转交 /play 走本机中转（开关关着时生成的存量
@@ -548,6 +595,14 @@ func directGuard(store *Store) http.Handler {
 					http.Redirect(w, r, "/play/"+url.PathEscape(it.FileName())+"?"+v.Encode(), http.StatusFound)
 					return
 				}
+				if r.Method == http.MethodHead {
+					serveHeadMeta(w, it, r.Header.Get("User-Agent"))
+					return
+				}
+				// 诊断：记录客户端真实特征（定位「网页版播放器卡顿」用）
+				log.Printf("  [direct] %s | UA=%q Origin=%q Range=%q",
+					it.FileName(), truncUA(r.Header.Get("User-Agent")),
+					r.Header.Get("Origin"), r.Header.Get("Range"))
 				u, err := resolveDirectURL(it)
 				if err != nil {
 					log.Printf("  [直链] %s 解析失败: %v", it.FileName(), err)
@@ -568,11 +623,13 @@ func directGuard(store *Store) http.Handler {
 					proxyBaiduRelay(w, r, u, ua, ck)
 					return
 				}
-				log.Printf("  [直链] %s → 302 跳转（数据不经过本机）", it.FileName())
+				log.Printf("  [直链] %s（%s）→ 302 | UA=%q", it.FileName(), it.Provider, truncUA(r.Header.Get("User-Agent")))
 				// 关键：禁止客户端缓存 302 目标。直链常在几秒~几分钟内过期，
 				// 缓存后第二次播放会拿到死链，表现为「视频不存在」。
-				w.Header().Set("Cache-Control", "no-store, max-age=0")
-				w.Header().Set("Pragma", "no-cache")
+				// 允许浏览器缓存这次跳转：预签名直链有效期 5.5 小时，
+				// 缓存 5 分钟绝对安全；否则播放器每发一个 Range 都要
+				// 回来问一次（表现为"每秒转圈"）。
+				w.Header().Set("Cache-Control", "private, max-age=300")
 				http.Redirect(w, r, u, http.StatusFound)
 				return
 			}
@@ -610,6 +667,29 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 			}
 		}
 
+		// 天翼：直链支持 Range、不绑会话，浏览器可以直接连 CDN —— 远程访问时
+		// 这一步决定了「数据过不过你家上行」。中转 = CDN→盒子→CF 隧道→手机，
+		// 家庭上行 20~50Mbps 根本扛不住 4K；302 = 手机直连电信 CDN，不占家里带宽。
+		// ?relay=1 可强制回到本机中转（排查 CDN 侧问题用）。
+		if it != nil && strings.EqualFold(it.Provider, "tianyi") && q.Get("relay") == "" {
+			if r.Method == http.MethodHead {
+				serveHeadMeta(w, it, r.Header.Get("User-Agent")) // CDN 不支持 HEAD，本机答大小
+				return
+			}
+			u, uerr := resolveDirectURL(it)
+			if uerr != nil || u == "" {
+				// 天翼铁律：只走 302。解析失败宁可报错，也不把 4K 流量灌进本机/云服务器。
+				log.Printf("  [直链] %s（天翼）解析失败: %v", it.FileName(), uerr)
+				http.Error(w, "取直链失败: "+uerr.Error(), http.StatusBadGateway)
+				return
+			}
+			// 同上：302 必须可缓存，否则 Range 请求逐个回源会卡帧。
+			w.Header().Set("Cache-Control", "private, max-age=300")
+			log.Printf("  [直链] %s（天翼）→ 302 直连 CDN（数据不过本机）", it.FileName())
+			http.Redirect(w, r, u, http.StatusFound)
+			return
+		}
+
 		// 夸克 + 开关开着：不走本机中转，内部解析出 TV 免认证直链后回 302，
 		// 客户端直连网盘 CDN，数据不经过本机（存量 /play .strm 的兼容路——
 		// 开关关着时生成的 /play 地址，开关打开后照样能播）。
@@ -637,8 +717,8 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 				return
 			}
 			// 禁止缓存 302 目标：直链几秒~几分钟内过期，缓存后第二次播放拿死链。
-			w.Header().Set("Cache-Control", "no-store, max-age=0")
-			w.Header().Set("Pragma", "no-cache")
+			// 同上：302 必须可缓存，否则 Range 请求逐个回源会卡帧。
+			w.Header().Set("Cache-Control", "private, max-age=300")
 			http.Redirect(w, r, u, http.StatusFound)
 			return
 		}
@@ -1085,6 +1165,10 @@ func davGuard(h http.Handler, store *Store, self string) http.Handler {
 			if vpath != "" && !strings.HasSuffix(vpath, "/") {
 				if it := store.FindByName(vpath); it != nil && it.IsShare() {
 					if p := providerByName(it.Provider); p != nil && p.Wants302() {
+						if r.Method == http.MethodHead {
+							serveHeadMeta(w, it, r.Header.Get("User-Agent"))
+							return
+						}
 						u, uerr := resolveDirectURL(it)
 						if uerr == nil {
 							log.Printf("  [302] %s（%s）→ 客户端直连网盘 CDN", it.FileName(), it.Provider)
@@ -1460,6 +1544,9 @@ func main() {
 		globalShares = gs
 	}
 
+	// 天翼订阅号登记（tianyi_subs.json，与条目同目录）
+	tianyiSubs = newTianyiSubStore(filepath.Join(filepath.Dir(*flagData), "tianyi_subs.json"))
+
 	// 追更定时器：到点自动重扫所有「追更中」的分享（默认 60 分钟一轮，-refresh=0 关闭）。
 	// 手动刷新按钮不受影响，随时可点；两者共用同一套增量入库逻辑。
 	self := *flagSelf
@@ -1468,6 +1555,10 @@ func main() {
 		log.Printf("自动探测本机地址: %s（若不对请用 -self 指定）", self)
 	}
 	startShareRefresher(store, time.Duration(*flagRefresh)*time.Minute, self)
+	// 天翼订阅号自动收录：每 30 分钟拉一次新分享（-refresh=0 时不启动）。
+	if *flagRefresh > 0 {
+		startTianyiSubRefresher(store, tianyiSubs, self, 30*time.Minute)
+	}
 	// 分享失效巡检：定时全量探测，确认失效后删除条目 + 登记 + STRM（默认 3 小时一轮）。
 	startShareHealthChecker(store, time.Duration(*flagHealth)*time.Minute, self)
 
@@ -1502,6 +1593,15 @@ func main() {
 	// 夸克 TV 扫码登录（与夸克普通 Cookie 登录并存，同一 provider 两种登录方式）
 	mux.HandleFunc("/api/login/quark/start", requireAuth(apiLoginStartQuark(as)))
 	mux.HandleFunc("/api/login/quark/poll", requireAuth(apiLoginPollQuark(as)))
+	// 天翼云盘扫码登录（accessToken 制，无刷新，过期重扫）
+	mux.HandleFunc("/api/login/tianyi/start", requireAuth(apiLoginStartTianyi))
+	mux.HandleFunc("/api/login/tianyi/poll", requireAuth(apiLoginPollTianyi(as)))
+	mux.HandleFunc("/api/tianyi/subs", requireAuth(apiTianyiSubs(tianyiSubs)))
+	mux.HandleFunc("/api/tianyi/subs/", requireAuth(apiTianyiSubItem(tianyiSubs)))
+	mux.HandleFunc("/api/tianyi/sub-shares", requireAuth(apiTianyiSubShares(store, tianyiSubs)))
+	mux.HandleFunc("/api/tianyi/sub-import", requireAuth(apiTianyiSubImport(store, tianyiSubs, self)))
+	mux.HandleFunc("/api/tianyi/sub-sync", requireAuth(apiTianyiSubSync(store, tianyiSubs, self)))
+	mux.HandleFunc("/api/tianyi/sub-backfill", requireAuth(apiTianyiSubBackfill(store, tianyiSubs, self)))
 	mux.HandleFunc("/api/quark/import", requireAuth(apiQuarkImport(as)))
 	mux.HandleFunc("/api/quark/list", requireAuth(apiQuarkList(as)))
 	mux.HandleFunc("/api/quark/add", requireAuth(apiQuarkAdd(store, as)))
@@ -1518,6 +1618,9 @@ func main() {
 	// 人工确认失效：立即清理该分享（不等巡检两轮）
 	mux.HandleFunc("/api/shares/purge", requireAuth(apiSharePurge(store, self)))
 	mux.HandleFunc("/api/share/add", requireAuth(apiShareAdd(store, self)))
+	// 批量导入：先解析预览（每行可单独调分类），确认后再入库
+	mux.HandleFunc("/api/share/batch/parse", requireAuth(apiShareBatchParse(store)))
+	mux.HandleFunc("/api/share/batch/add", requireAuth(apiShareBatchAdd(store, self)))
 	// STRM 导出：把虚拟盘镜像成 /data/strm 下的 .strm 目录树（飞牛影视媒体库用）
 	mux.HandleFunc("/api/strm/rebuild", requireAuth(apiSTRMRebuild(store, self)))
 	mux.HandleFunc("/api/strm/config", requireAuth(apiSTRMConfig(store, self)))
@@ -1539,6 +1642,16 @@ func main() {
 	log.Printf("WebDAV  : %s/dav", self)
 	log.Printf("直链302 : %s/direct （数据不过本机，适合流量/带宽受限的服务器）", self)
 	log.Printf("默认参数 : 并发 %d 路 / 分片 %dMB / 重试 %d 次", *flagConc, *flagChunkMB, *flagRetry)
+
+	// 退出前把条目库的待写快照刷盘（items.json 是异步写，最多晚 120ms）。
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
+		store.Flush()
+		log.Printf("已刷盘，退出")
+		os.Exit(0)
+	}()
 
 	srv := &http.Server{
 		Addr:              addr,

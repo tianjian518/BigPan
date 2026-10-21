@@ -65,6 +65,10 @@ type ShareFile struct {
 	// FidToken 夸克分享文件的访问令牌（share_fid_token）——转存用。
 	// 其他网盘为空。导入时随文件一起入库，播放转存时不必再扫分享树。
 	FidToken string `json:"fid_token,omitempty"`
+	// ShareNumID 天翼分享的数字 shareId（播放取链 GetFileDownload 必需）。
+	// 普通分享扫描时随分享信息拿到；订阅号分享直接来自拉取结果。
+	// 其他网盘为空。
+	ShareNumID string `json:"share_num_id,omitempty"`
 }
 
 // 分享链接所能识别的域名
@@ -495,6 +499,9 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 				// FidToken 夸克分享令牌（share_fid_token）——前端原样带回，
 				// 仅供夸克 TV 302 播放时转存用，其他网盘为空。
 				FidToken string `json:"fid_token"`
+				// ShareNumID 天翼分享的数字 shareId——前端原样带回，
+				// 播放取链用，其他网盘为空。
+				ShareNumID string `json:"share_num_id"`
 			} `json:"files"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Files) == 0 {
@@ -539,6 +546,7 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 				Passcode: req.Passcode,
 				FileID:   f.ID,
 				FidToken: f.FidToken, // 夸克 TV 302 转存用（其他网盘为空）
+				ShareNumID: f.ShareNumID, // 天翼取链用（其他网盘为空）
 				Ext:      ext,
 				Size:     f.Size,
 			})
@@ -799,6 +807,7 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 			Category: cat, Show: show,
 			Provider: provider, ShareID: shareID, Passcode: passcode,
 			FileID: f.ID, Ext: ext, Size: f.Size,
+			ShareNumID: f.ShareNumID, // 天翼取链要（其他网盘为空）
 		})
 		existTitles[name] = true
 		added++
@@ -967,12 +976,7 @@ func apiShowDelete(store *Store, self string) http.HandlerFunc {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "参数错误"})
 			return
 		}
-		n := 0
-		for _, id := range req.IDs {
-			if store.Delete(id) {
-				n++
-			}
-		}
+		n := store.DeleteBatch(req.IDs)
 		// 清理空壳的追更登记
 		if globalShares != nil {
 			for _, m := range globalShares.List() {

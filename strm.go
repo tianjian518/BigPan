@@ -406,10 +406,22 @@ func itemPlayURL(it *Item, self string) string {
 		}
 		return base + "/play/" + url.PathEscape(it.FileName()) + "?" + v.Encode()
 	}
-	// 其余一律 302 直连：路径即虚拟盘内完整路径，/direct/ 按路径查条目后回 302。
-	// 带 k=路径令牌免去 Basic Auth（播放器不带用户名密码）。
-	p := it.FullPath()
-	return base + "/direct/" + escapePath(p) + "?k=" + strmPathToken(p)
+	// 其余一律 302 直连。
+	//
+	// 【2026-10-21 改短地址】原来写完整虚拟路径（/direct/天翼/剧名/文件名.mkv），
+	// 中文 + 空格 + ‘ ’ 这类符号编码后 300+ 字符。原版 cloudpan189-share 用的是
+	// 纯数字 ID（/api/file/download/123?sign=），只有 50 字符。实测飞牛影视网页版
+	// 对超长、含特殊字符的 URL 会反复重试（每秒一次，表现为一直转圈），
+	// 而手机 APP 正常、项目自己的网页版正常 —— 正是两套播放器对 URL 的容忍度不同。
+	// 现在改成 /direct/<条目ID>.mkv?k=<令牌>：保留扩展名（播放器按后缀选解码器），
+	// 长度与原版相当。旧的长路径格式仍然兼容（FindByName 优先）。
+	// 【关键】地址里**不带扩展名**，和原版 /api/file/download/123?sign= 保持一致。
+	// 飞牛影视看到 URL 带 .mkv 会按「MKV 容器」走它自己的封装流程（网页版会转成
+	// 分片再喂 MSE，4K 下一直缓冲）；无后缀的流地址它直接交给浏览器原生解码，
+	// 和项目自己的 <video> 播放一致。文件名的后缀信息保留在 .strm 文件名里
+	// （xxx.mkv.strm），媒体库刮削不受影响。
+	short := it.ID
+	return base + "/direct/" + url.PathEscape(short) + "?k=" + strmPathToken(short)
 }
 
 // strmPathToken 为 /direct/ 路径签发播放令牌。
@@ -482,7 +494,20 @@ func buildSTRM(store *Store, self string, force bool) (int, error) {
 		if sub := strmItemDir(it); sub != "" {
 			dir = filepath.Join(root, filepath.FromSlash(sub))
 		}
-		name := it.FileName() + ".strm"
+		// 【2026-10-21 对齐原版】文件名去掉扩展名：video.mkv → video.strm。
+		//
+		// 这是 cloudpan189-share 的做法（strings.TrimSuffix(file.Name, extName)+".strm"）。
+		// 原因：飞牛影视扫描时**按 .strm 文件名里的扩展名判断容器格式**。
+		// 我们原来生成 video.mkv.strm，飞牛认定这是 MKV → 网页版走自己的封装/分片
+		// 流程，4K 下一直缓冲（MP4 走原生解码所以不卡）；改成 video.strm 后，
+		// 文件名不含格式线索，飞牛直接把它当通用流交给浏览器原生解码 ——
+		// 与项目自己 <video> 播放、手机 APP 播放的行为一致。
+		// 改 URL 后缀没用，因为飞牛看的是文件名不是地址。
+		fname := it.FileName()
+		if it.Ext != "" {
+			fname = strings.TrimSuffix(fname, it.Ext)
+		}
+		name := fname + ".strm"
 		// 不写末尾换行：部分媒体服务器解析 strm 时对空行敏感，纯 URL 最稳。
 		want[filepath.Join(dir, name)] = itemPlayURL(it, self)
 	}

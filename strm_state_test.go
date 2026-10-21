@@ -20,7 +20,7 @@ func TestBuildSTRMBaseChangeNeedsManualForce(t *testing.T) {
 	self := "http://192.168.1.10:8099"
 	newSelf := "https://pan.tianjianfn.de5.net"
 
-	ep1 := filepath.Join(root, "百度/国产剧/甲/第01集.mp4.strm")
+	ep1 := filepath.Join(root, "百度/国产剧/甲/第01集.strm")
 	if n, err := buildSTRM(s, self, false); err != nil || n != 1 {
 		t.Fatalf("首次构建 n=%d err=%v，期望 1/nil", n, err)
 	}
@@ -50,7 +50,7 @@ func TestBuildSTRMBaseChangeNeedsManualForce(t *testing.T) {
 	if n, err := buildSTRM(s, newSelf, false); err != nil || n != 1 {
 		t.Fatalf("stale 期间新增条目 n=%d err=%v，期望 1/nil", n, err)
 	}
-	ep2 := filepath.Join(root, "百度/国产剧/甲/第02集.mp4.strm")
+	ep2 := filepath.Join(root, "百度/国产剧/甲/第02集.strm")
 	b, err := os.ReadFile(ep2)
 	if err != nil {
 		t.Fatalf("新条目 .strm 未生成: %v", err)
@@ -97,7 +97,7 @@ func TestDetectSTRMBaseSeedsStaleState(t *testing.T) {
 	if err := os.Remove(strmStatePath()); err != nil {
 		t.Fatal(err)
 	}
-	ep1 := filepath.Join(root, "百度/国产剧/甲/第01集.mp4.strm")
+	ep1 := filepath.Join(root, "百度/国产剧/甲/第01集.strm")
 	st1, _ := os.Stat(ep1)
 
 	// 地址变过：反推出旧地址 → 按 stale 处理，不自动重写
@@ -138,14 +138,14 @@ func TestDetectSTRMBase(t *testing.T) {
 	if err := os.MkdirAll(sub, 0755); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(sub, "x.mp4.strm"), []byte("http://192.168.1.10:8099/direct/a/b/x.mp4?k=abc"), 0644)
+	os.WriteFile(filepath.Join(sub, "x.strm"), []byte("http://192.168.1.10:8099/direct/a/b/x.mp4?k=abc"), 0644)
 	os.WriteFile(filepath.Join(d1, "note.txt"), []byte("not a strm"), 0644)
 	if got := detectSTRMBase(d1); got != "http://192.168.1.10:8099" {
 		t.Errorf("/direct/ 形态反推错: %q", got)
 	}
 	// /play/ 形态（夸克）
 	d2 := t.TempDir()
-	os.WriteFile(filepath.Join(d2, "q.mkv.strm"), []byte("https://pan.example.com/play/q.mkv?id=1&size=2"), 0644)
+	os.WriteFile(filepath.Join(d2, "q.strm"), []byte("https://pan.example.com/play/q.mkv?id=1&size=2"), 0644)
 	if got := detectSTRMBase(d2); got != "https://pan.example.com" {
 		t.Errorf("/play/ 形态反推错: %q", got)
 	}

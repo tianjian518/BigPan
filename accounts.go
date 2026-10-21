@@ -35,6 +35,11 @@ type Account struct {
 	// 刷新后由客户端回写（见 quark_tv.go 的 onRefresh）。
 	DeviceID    string `json:"device_id,omitempty"`
 	AccessToken string `json:"access_token,omitempty"`
+
+	// —— 天翼云盘（provider="tianyi"）专用字段 ——
+	// 单账号模型下 Cookie 字段复用：存扫码拿到的 accessToken。
+	// 天翼 token 无刷新机制，过期只能重扫码，所以要把过期时间一并存下。
+	TokenExpires int64 `json:"token_expires,omitempty"` // 绝对过期时间（毫秒时间戳）
 }
 
 // AccountStore 账号持久化（JSON 文件）。
@@ -137,6 +142,9 @@ func retireOldAccount(old Account) {
 			baiduPurgeOrphans(ck, 30*time.Minute)
 			log.Printf("[账号] 旧百度账号（%s）的临时转存文件已在后台清理", label)
 		}(old.Cookie, old.Label)
+	}
+	if old.Provider == "tianyi" {
+		tianyiResetClients() // 旧 token 的 API 门面不能复用
 	}
 }
 

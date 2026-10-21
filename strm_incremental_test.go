@@ -19,7 +19,7 @@ func TestBuildSTRMIncremental(t *testing.T) {
 	strmCfg = STRMConfig{Layout: "full", AutoRebuild: true}
 	self := "http://192.168.1.10:8099"
 
-	ep1 := filepath.Join(root, "百度/国产剧/甲/第01集.mp4.strm")
+	ep1 := filepath.Join(root, "百度/国产剧/甲/第01集.strm")
 
 	// ① 首次：写入唯一的条目
 	if n, err := buildSTRM(s, self, false); err != nil || n != 1 {
@@ -49,7 +49,7 @@ func TestBuildSTRMIncremental(t *testing.T) {
 	if n, err := buildSTRM(s, self, false); err != nil || n != 1 {
 		t.Fatalf("加一部剧 n=%d err=%v，期望 1/nil（只写新文件）", n, err)
 	}
-	ep2 := filepath.Join(root, "百度/国产剧/乙/第01集.mp4.strm")
+	ep2 := filepath.Join(root, "百度/国产剧/乙/第01集.strm")
 	if _, err := os.Stat(ep2); err != nil {
 		t.Fatalf("新剧集未生成: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestBuildSTRMIncremental(t *testing.T) {
 	if _, err := os.Stat(ep2); err == nil {
 		t.Fatal("改名后旧 .strm 应被删除")
 	}
-	ep3 := filepath.Join(root, "百度/国产剧/丙/第01集.mp4.strm")
+	ep3 := filepath.Join(root, "百度/国产剧/丙/第01集.strm")
 	if _, err := os.Stat(ep3); err != nil {
 		t.Fatalf("改名后新路径未生成: %v", err)
 	}

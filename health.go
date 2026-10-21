@@ -105,6 +105,9 @@ func healthTargets(store *Store) []ShareMeta {
 		if it.Provider == "" || it.ShareID == "" {
 			continue
 		}
+		if it.SubUserID != "" {
+			continue // 订阅号收录的分享由订阅号面板负责，不参加通用巡检
+		}
 		k := shareKey(it.Provider, it.ShareID)
 		if seen[k] {
 			continue
@@ -219,14 +222,13 @@ func healthCycle(store *Store, self string) healthState {
 // purgeShare 删除某分享的全部条目 + 追更登记，返回删除条目数。
 // 严格按 (provider, shareID) 匹配，不会波及其他分享。
 func purgeShare(store *Store, m ShareMeta) int {
-	n := 0
+	var ids []string
 	for _, it := range store.List() {
 		if it.Provider == m.Provider && it.ShareID == m.ShareID {
-			if store.Delete(it.ID) {
-				n++
-			}
+			ids = append(ids, it.ID)
 		}
 	}
+	n := store.DeleteBatch(ids)
 	if globalShares != nil {
 		globalShares.Delete(m.Provider, m.ShareID)
 	}
