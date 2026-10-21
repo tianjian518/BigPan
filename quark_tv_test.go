@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,7 +84,9 @@ func TestHandlePlayQuarkBranch(t *testing.T) {
 	// 开关开着：应走进 quarkTVPlayTarget，因没有 TV 账号报「扫码」
 	setQuarkTV302(true)
 	rec := httptest.NewRecorder()
-	h(rec, httptest.NewRequest(http.MethodGet, "/play?id=q1", nil))
+	req := httptest.NewRequest(http.MethodGet, "/play?id=q1", nil)
+	req.SetBasicAuth(*flagUser, *flagPass) // P1-3 起 /play 要鉴权
+	h(rec, req)
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "扫码") {
 		t.Fatalf("开关开着应引导扫码，got %d %s", rec.Code, rec.Body.String())
 	}
@@ -91,9 +94,30 @@ func TestHandlePlayQuarkBranch(t *testing.T) {
 	// 开关关着：老路，报「导入夸克凭证」
 	setQuarkTV302(false)
 	rec = httptest.NewRecorder()
-	h(rec, httptest.NewRequest(http.MethodGet, "/play?id=q1", nil))
+	req = httptest.NewRequest(http.MethodGet, "/play?id=q1", nil)
+	req.SetBasicAuth(*flagUser, *flagPass)
+	h(rec, req)
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "夸克凭证") {
 		t.Fatalf("开关关着应引导导 Cookie，got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// /play 无凭证必须 401（P1-3）：拿地址就能播的时代结束了。
+func TestHandlePlayRequiresAuth(t *testing.T) {
+	s := setupQuarkTVTest(t)
+	as, _ := NewAccountStore(filepath.Join(t.TempDir(), "accounts.json"))
+	h := handlePlay(s, as)
+
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/play?id=q1", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("无凭证应 401，got %d %s", rec.Code, rec.Body.String())
+	}
+	// 带对路径令牌也应放行（令牌路）
+	rec = httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/play?id=q1&k="+strmPathToken("/play"), nil))
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatal("带正确路径令牌还被 401")
 	}
 }
 
@@ -108,17 +132,26 @@ func TestDirectGuardQuarkRedirectsToPlay(t *testing.T) {
 	}
 	// 带路径令牌免登录（媒体服务器场景）
 	tok := strmPathToken(it.FullPath())
-	url := "/direct/" + strings.TrimPrefix(it.FullPath(), "/") + "?k=" + tok
+	reqURL := "/direct/" + strings.TrimPrefix(it.FullPath(), "/") + "?k=" + tok
 
 	setQuarkTV302(false)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, reqURL, nil))
 	if rec.Code != http.StatusFound {
 		t.Fatalf("开关关着夸克 /direct 应转 /play，got %d %s", rec.Code, rec.Body.String())
 	}
 	loc := rec.Header().Get("Location")
 	if !strings.HasPrefix(loc, "/play/") || !strings.Contains(loc, "id=q1") {
 		t.Fatalf("转跳目标不对: %s", loc)
+	}
+	// 重定向必须带 /play 路径令牌：播放器跟随重定向时不带任何凭证，
+	// P1-3 之后 /play 靠这个 k 放行（少了它 legacy 中转路会被 401 拦掉）。
+	u2, perr := url.Parse(loc)
+	if perr != nil {
+		t.Fatalf("解析重定向目标失败: %v", perr)
+	}
+	if k := u2.Query().Get("k"); k == "" || k != strmPathToken(u2.Path) {
+		t.Fatalf("重定向没带有效的路径令牌: %s", loc)
 	}
 }
 

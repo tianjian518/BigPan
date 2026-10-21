@@ -581,6 +581,9 @@ func directGuard(store *Store) http.Handler {
 					if it.Size > 0 {
 						v.Set("size", fmt.Sprintf("%d", it.Size))
 					}
+					// 带上 /play 路径令牌：播放器跟随重定向时不带任何凭证，
+					// 少了这个 k，/play 的鉴权会把 legacy 中转路 401 掉。
+					v.Set("k", strmPathToken("/play/"+it.FileName()))
 					http.Redirect(w, r, "/play/"+url.PathEscape(it.FileName())+"?"+v.Encode(), http.StatusFound)
 					return
 				}
@@ -636,6 +639,18 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 		h0.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		// 【鉴权 · 2026-10-21 P1-3】/play 以前完全不设防：拿到地址就能播放/中转，
+		// 同一局域网内任何人都能看你的库。规矩与 /direct 对齐，放行条件：
+		//   ① authed：Basic Auth（播放器/WebDAV 客户端）或登录 Cookie（浏览器）；
+		//   ② STRM 路径令牌 ?k=（/direct 的夸克 legacy 重定向会带上，见 directGuard；
+		//      WebDAV 内部回环请求则带 Basic，见 vfs.go remoteFile.ensure）。
+		// OPTIONS 预检在上面已放行 —— 跨域播放器的预检不能被 401 拦掉。
+		if !authed(r) && r.URL.Query().Get("k") != strmPathToken(r.URL.Path) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="BigPan"`)
+			http.Error(w, "需要登录", http.StatusUnauthorized)
 			return
 		}
 

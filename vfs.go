@@ -262,6 +262,10 @@ func (f *remoteFile) ensure() error {
 	if err != nil {
 		return err
 	}
+	// 内部回环请求也要过 /play 的鉴权（2026-10-21 P1-3）：带上 Basic，
+	// 对齐 authed() 的第一条路。这个请求是服务端打给自己的（self 可能是
+	// 公网隧道地址），凭证与 /dav 客户端直连时走同一条 HTTPS，不新增暴露面。
+	req.SetBasicAuth(*flagUser, *flagPass)
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", f.pos))
 
 	t0 := time.Now()
