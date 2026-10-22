@@ -88,6 +88,7 @@ func ucTransferForPlay(pc *UC, item *Item) (string, error) {
 	}
 	fileName := item.Title + item.Ext
 	if fid := ucFindOwnFile(pc, pdir, fileName, item.Size); fid != "" {
+		ucRecordTemp(fid) // 复用即续期，连看的剧不会被 sweeper 清掉
 		log.Printf("[uc-tv] 复用已转存文件 %s（fid=%s）", fileName, fid)
 		return fid, nil
 	}
@@ -133,6 +134,7 @@ func ucTransferForPlay(pc *UC, item *Item) (string, error) {
 			return "", fmt.Errorf("转存完成但临时目录里没找到「%s」（可能空间不足）", fileName)
 		}
 	}
+	ucRecordTemp(fid)
 	log.Printf("[uc-tv] 已转存 %s → fid=%s", fileName, fid)
 	return fid, nil
 }

@@ -136,6 +136,9 @@ func retireOldAccount(old Account) {
 		quarkFailCacheReset()
 		quarkLinkReset() // 302 直链短缓存也绑账号，一起清
 	}
+	if old.Provider == "uc" || old.Provider == "uc_tv" {
+		ucTempReset() // 新号的盘里没有 /bigpan_tmp/uc，旧 fid/记账都要丢
+	}
 	if old.Provider == "baidu" && old.Cookie != "" {
 		// 【防崩】一次性后台任务：panic 只记日志，不影响主流程。
 		ck, label := old.Cookie, old.Label
