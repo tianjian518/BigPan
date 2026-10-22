@@ -412,6 +412,7 @@ func resolveDirectURL(it *Item) (string, error) {
 		}
 		rp, err := p.ResolvePlay(it)
 		if err != nil {
+			statPlay(it.Provider, false, err)
 			return "", err
 		}
 		url, ptUA, cookie = rp.URL, rp.UA, rp.Cookie
@@ -426,6 +427,8 @@ func resolveDirectURL(it *Item) (string, error) {
 		size: it.Size, ranged: true,
 		exp: time.Now().Add(playTargetTTL),
 	})
+	statPlay(it.Provider, true, nil)
+	rememberProbeItem(it)
 	return url, nil
 }
 
@@ -1518,6 +1521,8 @@ func main() {
 	}
 
 	// 账号库与条目库放在同一目录
+	initPlayStats(filepath.Join(filepath.Dir(*flagData), "play_stats.json"))
+	startSpeedProbe()
 	acctPath := filepath.Join(filepath.Dir(*flagData), "accounts.json")
 	as, err := NewAccountStore(acctPath)
 	if err != nil {
@@ -1580,6 +1585,8 @@ func main() {
 	mux.HandleFunc("/api/login/115/poll", requireAuth(apiLoginPoll(as)))
 	// 全局播放设置（夸克 TV 302 开关等）：GET 读 / POST 改，改完立即生效
 	mux.HandleFunc("/api/settings", requireAuth(apiSettings()))
+	mux.HandleFunc("/api/stats", requireAuth(apiPlayStats()))
+	mux.HandleFunc("/api/stats/probe", requireAuth(apiProbeNow()))
 	mux.HandleFunc("/api/login/baidu/start", requireAuth(apiLoginStartBaidu))
 	mux.HandleFunc("/api/login/baidu/poll", requireAuth(apiLoginPollBaidu(as)))
 	// 夸克 TV 扫码登录（与夸克普通 Cookie 登录并存，同一 provider 两种登录方式）
