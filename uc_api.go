@@ -175,7 +175,7 @@ func (u *UC) ShareToken(pwdID, passcode string) (string, error) {
 		} `json:"data"`
 	}
 	err := u.api(http.MethodPost, "/share/sharepage/token",
-		map[string]string{"pwd_id": pwdID, "passcode": passcode}, nil, &out)
+		nil, map[string]string{"pwd_id": pwdID, "passcode": passcode}, &out)
 	if err != nil {
 		return "", err
 	}
