@@ -286,8 +286,10 @@ func (u *UC) PollTask(taskID string) (string, error) {
 			if out.Data.SaveAs.FID != "" {
 				return out.Data.SaveAs.FID, nil
 			}
-			if out.Data.Status == 2 { // 2 = 完成（UC/夸克同口径）
-				return "", fmt.Errorf("UC 转存完成但没有返回文件 ID")
+			if out.Data.Status == 2 {
+				// UC 的转存任务不回传 fid（实测 2026-10-22：status=2、task_type=17，
+				// save_as 为空）。按「已完成」返回空 fid，由调用方列目录按名找。
+				return "", nil
 			}
 		}
 		if time.Now().After(deadline) {

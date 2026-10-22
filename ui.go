@@ -1821,7 +1821,7 @@ function openConn(pv){
   var c=PV_CONN[pv];if(!c)return;
   CONN_PV=pv;
   // 从已装账号恢复进度（重开弹窗时勾不能丢）
-  CONN_DONE={scan:!!ACCTS_MAP['quark_tv'],cookie:!!ACCTS_MAP['quark']};
+  CONN_DONE={scan:!!ACCTS_MAP[pv+'_tv'],cookie:!!ACCTS_MAP[pv]};
   $('connTitle').innerHTML='连接 '+esc(c.name);
   var h='';
   if(c.needBoth)h+='<div id="connBanner" style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px;background:rgba(32,128,240,.04)"></div>';
@@ -1844,10 +1844,10 @@ function updateConnBanner(){
   var okc='var(--ok)',mut='var(--mut)';
   var prog='<div style="font-size:13px;margin-bottom:8px">连接进度：<b style="color:'+(s?okc:mut)+'">'+(s?'✓ 扫码登录':'① 扫码登录')+'</b> ＋ <b style="color:'+(c?okc:mut)+'">'+(c?'✓ Cookie':'② Cookie')+'</b></div>';
   var msg;
-  if(s&&c)msg='<div style="color:var(--ok);font-weight:600">🎉 两样都连好了，夸克 302 直链播放已解锁！</div>';
+  if(s&&c)msg='<div style="color:var(--ok);font-weight:600">🎉 两样都连好了，302 直链播放已解锁！</div>';
   else if(s)msg='<div class="sub" style="color:var(--warn)">还差 <b>Cookie</b>（分享转存用它）——已帮你切到「粘贴 Cookie」，贴完点「导入连接」。</div>';
   else if(c)msg='<div class="sub" style="color:var(--warn)">还差 <b>扫码登录</b>（302 直链播放用它）——已帮你切到「扫码登录」，用手机夸克扫一下。</div>';
-  else msg='<div class="sub">夸克 302 直连需要<b>两样凭证</b>：扫码登录取直链、Cookie 管转存。在这个弹窗里依次做完，做完一样不会关掉，接着做另一样。</div>';
+  else msg='<div class="sub">302 直连需要<b>两样凭证</b>：扫码登录取直链、Cookie 管转存。在这个弹窗里依次做完，做完一样不会关掉，接着做另一样。</div>';
   b.innerHTML=prog+msg;
 }
 // tab 标签带完成勾
@@ -1863,7 +1863,7 @@ function connDone(m){
   CONN_DONE[m]=true;
   // 记到「当前网盘」的键上：夸克扫码记 quark_tv（与 Cookie 的 quark 分开存），
   // 其他网盘扫码记自己的 provider —— 不能一律写 quark_tv，会污染夸克弹窗状态。
-  var scanKey=CONN_PV==='quark'?'quark_tv':CONN_PV;
+  var scanKey=c.needBoth?(CONN_PV+'_tv'):CONN_PV;
   if(m==='scan')ACCTS_MAP[scanKey]={provider:scanKey};
   else ACCTS_MAP[CONN_PV]={provider:CONN_PV};
   updateConnBanner();

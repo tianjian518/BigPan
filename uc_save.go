@@ -98,27 +98,50 @@ func ucTransferForPlay(pc *UC, item *Item) (string, error) {
 	token := item.FidToken
 	if token == "" {
 		// 老条目没有令牌：重扫分享树补齐（只扫同 fid 那条路径的父目录）。
-		token = ucFindFidToken(pc, item)
+		token = ucFindFidToken(pc, item, st)
 		if token != "" {
 			quarkRememberFidToken(item.ID, token)
 		}
 	}
 	taskID, err := pc.SaveFile(item.ShareID, st, item.FileID, token, pdir)
 	if err != nil {
-		return "", err
+		// 41020 = 令牌与当前会话不匹配（库里存的是旧会话签发的），
+		// 用同一次 stoken 重扫分享树拿新令牌再试一次。
+		if nt := ucFindFidToken(pc, item, st); nt != "" && nt != token {
+			log.Printf("[uc-tv] 分享令牌已刷新，重试转存 %s", fileName)
+			quarkRememberFidToken(item.ID, nt)
+			taskID, err = pc.SaveFile(item.ShareID, st, item.FileID, nt, pdir)
+		}
+		if err != nil {
+			return "", err
+		}
 	}
 	fid, err := pc.PollTask(taskID)
 	if err != nil {
 		return "", err
 	}
+	if fid == "" {
+		// UC 不回传 fid：转存完成后列临时目录，按「同名同大小」找回。
+		for i := 0; i < 12 && fid == ""; i++ {
+			fid = ucFindOwnFile(pc, pdir, fileName, item.Size)
+			if fid != "" {
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+		if fid == "" {
+			return "", fmt.Errorf("转存完成但临时目录里没找到「%s」（可能空间不足）", fileName)
+		}
+	}
 	log.Printf("[uc-tv] 已转存 %s → fid=%s", fileName, fid)
 	return fid, nil
 }
 
-// ucFindFidToken 兜底：在分享树里按 file_id 找回 share_fid_token。
-func ucFindFidToken(pc *UC, item *Item) string {
-	st, err := pc.ShareToken(item.ShareID, item.Passcode)
-	if err != nil {
+// ucFindFidToken 在分享树里按 file_id 找回 share_fid_token。
+// 必须复用调用方那一次 ShareToken 的会话 —— UC 的 fid_token 与 stoken 绑定，
+// 跨会话拿到的令牌转存会报 41020「token 校验异常」（与夸克同款事故）。
+func ucFindFidToken(pc *UC, item *Item, st string) string {
+	if st == "" {
 		return ""
 	}
 	var walk func(pdir string, depth int) string
