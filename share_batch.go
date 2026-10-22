@@ -230,6 +230,18 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 					keep[id] = true
 				}
 			}
+			// 同 apiShareAdd：剥掉分享自带的容器目录（用户给的剧名已代表这一层）
+			var bp []string
+			for _, f := range info.Files {
+				if !f.IsDir && isVideo(f.Name) {
+					bp = append(bp, f.Path)
+				}
+			}
+			shareRoot := commonShareRoot(bp)
+			// 剧名留空 → 回退到分享顶层名（与单个导入一致）
+			if strings.TrimSpace(showFinal) == "未命名" && shareRoot != "" {
+				showFinal = safeFilename(shareRoot)
+			}
 			batch := make([]Item, 0, len(info.Files))
 			for _, f := range info.Files {
 				if f.ID == "" || f.IsDir || !isVideo(f.Name) {
@@ -238,7 +250,7 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 				if keep != nil && !keep[f.ID] {
 					continue
 				}
-				dir := buildItemDir(info.Provider, category, showName, f.Path)
+				dir := buildItemDir(info.Provider, category, showFinal, stripShareRoot(f.Path, shareRoot))
 				ext := strings.ToLower(filepath.Ext(f.Name))
 				if ext == "" {
 					ext = strings.ToLower(filepath.Ext(f.Path))

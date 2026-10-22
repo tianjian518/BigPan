@@ -438,6 +438,47 @@ func tmdbidOf(s string) string {
 // 病历：用户把「Z==剧（2026）」改名成规范名「示例剧（2026）」，两边字符串
 // 不相等老规则折不掉 → 规范名下面套着变形名，两层目录，共 7 部 50 个文件。
 // 目录名所有段一律剥尾部刮削标记（stripScrape 用途一）。
+// commonShareRoot 求一批分享文件的「共同顶层目录」。
+//
+// 用途：UC/百度等分享常带一层自己的容器目录（可能是乱码、Emby 变形名、
+// 甚至分享者随手起的名字）。用户导入时已经给了规范剧名，这层容器就成了
+// 多出来的「剧名/乱码名/…」——2026-10-22 用户在 UC 国漫上遇到的就是这个。
+//
+// 规则：所有文件都在同一个顶层目录下 → 返回该目录名（可安全剥掉）；
+// 有任何文件直接在根层、或顶层不一致（合集分享）→ 返回空，不剥。
+func commonShareRoot(paths []string) string {
+	root := ""
+	for _, p := range paths {
+		d := strings.Trim(filepath.ToSlash(filepath.Dir(p)), "/")
+		if d == "" || d == "." {
+			return ""
+		}
+		seg := strings.Split(d, "/")[0]
+		if seg == "" {
+			return ""
+		}
+		if root == "" {
+			root = seg
+		} else if root != seg {
+			return ""
+		}
+	}
+	return root
+}
+
+// stripShareRoot 剥掉共同顶层（找不到共同顶层时原样返回）。
+func stripShareRoot(filePath, root string) string {
+	if root == "" {
+		return filePath
+	}
+	p := filepath.ToSlash(filePath)
+	prefix := root + "/"
+	if strings.HasPrefix(p, prefix) {
+		return strings.TrimPrefix(p, prefix)
+	}
+	return filePath
+}
+
 func buildItemDir(provider, category, showName, filePath string) string {
 	dir := providerCN(provider)
 	// 【2026-10-17 修潜伏 bug】safeFilename("") 返回「未命名」而非空串，
@@ -515,7 +556,20 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": catErr.Error()})
 			return
 		}
+		// 分享自带的顶层容器目录（可能是乱码/变形名）。规则（用户 2026-10-22 定）：
+		//   · 用户填了剧名 → 用剧名**替换**这层，不额外多一级；
+		//   · 用户留空    → 就用分享原来的顶层名兜底；
+		//   · 多顶层/根层有文件（合集分享）→ 不动，各自保留。
+		paths := make([]string, 0, len(req.Files))
+		for _, f := range req.Files {
+			paths = append(paths, f.Path)
+		}
+		shareRoot := commonShareRoot(paths)
+
 		showNameRaw := strings.TrimSpace(req.Title)
+		if showNameRaw == "" {
+			showNameRaw = shareRoot // 留空：回退到分享顶层名
+		}
 		showFinal := safeFilename(showNameRaw)
 		if showFinal == "" {
 			showFinal = "未命名"
@@ -525,7 +579,7 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 			if f.ID == "" {
 				continue
 			}
-			dir := buildItemDir(req.Provider, category, req.Title, f.Path)
+			dir := buildItemDir(req.Provider, category, showFinal, stripShareRoot(f.Path, shareRoot))
 			// 保留真实扩展名 —— 这是播放器选择解析器的唯一依据。
 			// 曾因强行改成 .mp4 导致 MKV 文件全部无法播放。
 			ext := strings.ToLower(filepath.Ext(f.Name))
