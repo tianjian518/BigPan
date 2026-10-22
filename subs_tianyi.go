@@ -211,9 +211,15 @@ func tianyiSubImportOne(store *Store, self string, e tianyiSubEntry, s tianyiSub
 		showFinal = "未命名"
 	}
 	numID := fmt.Sprintf("%d", s.ShareId)
+	// 订阅导入与手动导入同规则：剥掉分享顶层容器（多顶层不剥）。
+	subPaths := make([]string, 0, len(files))
+	for _, f := range files {
+		subPaths = append(subPaths, f.Path)
+	}
+	subRoot := commonShareRoot(subPaths)
 	batch := make([]Item, 0, len(files))
 	for _, f := range files {
-		dir := buildItemDir("tianyi", category, showRaw, f.Path)
+		dir := buildItemDir("tianyi", category, showRaw, stripShareRoot(f.Path, subRoot))
 		ext := strings.ToLower(filepath.Ext(f.Name))
 		if ext == "" {
 			ext = strings.ToLower(filepath.Ext(f.Path))

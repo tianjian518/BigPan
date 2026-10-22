@@ -838,6 +838,13 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 	if show == "" {
 		show = safeFilename(title)
 	}
+	// 追更同样剥掉分享顶层容器：与首次导入保持同一套目录规则。
+	// 已有条目若本来就是「剧名 == 顶层名」，剥离是空操作，路径不会变。
+	refreshPaths := make([]string, 0, len(files))
+	for _, f := range files {
+		refreshPaths = append(refreshPaths, f.Path)
+	}
+	refreshRoot := commonShareRoot(refreshPaths)
 	for _, f := range files {
 		if f.ID == "" {
 			continue
@@ -850,7 +857,7 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 			continue
 		}
 		// 目录构造统一走 buildItemDir（分类/剧名/同名嵌套折叠都在里面）
-		dir := buildItemDir(provider, cat, show, f.Path)
+		dir := buildItemDir(provider, cat, show, stripShareRoot(f.Path, refreshRoot))
 		ext := strings.ToLower(filepath.Ext(f.Name))
 		if ext == "" {
 			ext = strings.ToLower(filepath.Ext(f.Path))
