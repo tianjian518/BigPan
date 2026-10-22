@@ -603,9 +603,9 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
 </div>
 <script>
 var ITEMS=[], SELF='', CURID='', TREE={}, MOK=null;
-var PVCN={quark:'夸克网盘','115':'115网盘',mobile139:'移动云盘',tianyi:'天翼云盘',baidu:'百度网盘'};
+var PVCN={quark:'夸克网盘','115':'115网盘',mobile139:'移动云盘',tianyi:'天翼云盘',baidu:'百度网盘',uc:'UC网盘'};
 // 列表/概览里的短名：「夸克/电视剧/国产剧」比「夸克网盘/…」清爽
-var PVSHORT={quark:'夸克','115':'115',mobile139:'移动',tianyi:'天翼',baidu:'百度'};
+var PVSHORT={quark:'夸克','115':'115',mobile139:'移动',tianyi:'天翼',baidu:'百度',uc:'UC'};
 // 网盘名统一成短名：目录名可能是「夸克」「115网盘」「mobile139」等各种写法，
 // 显示层一律收敛成 夸克/115/移动/天翼/百度（不动已有目录名，避免目录裂开）
 function pvLabel(name){
@@ -618,7 +618,7 @@ function pvLabel(name){
   if(name.indexOf('百度')>=0)return '百度';
   return name;
 }
-var PVCLS={quark:'q','115':'n',mobile139:'m',tianyi:'t',baidu:'b'};
+var PVCLS={quark:'q','115':'n',mobile139:'m',tianyi:'t',baidu:'b',uc:'u'};
 var VIDEO_EXTS=/\.(mkv|mp4|ts|avi|mov|wmv|flv|webm|rmvb|iso|m2ts)$/i;
 function $(x){return document.getElementById(x)}
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML}
@@ -1602,7 +1602,7 @@ function openPlayer(id){
   //   百度      —— 默认 302 会被拒，只有打开「浏览器代取」才走中转
   //   移动/115  —— 只给 HLS/被封杀，不放开
   var relayable=(it.provider==='baidu'&&BAIDURELAY)||it.provider==='tianyi';
-  if(it.provider&&it.provider!=='quark'&&!it.url&&!relayable){
+  if(it.provider&&it.provider!=='quark'&&it.provider!=='uc'&&!it.url&&!relayable){
     PVHINT=true;
     $('pv').removeAttribute('src');try{$('pv').load()}catch(e){}
     var tip='<b>'+(PVCN[it.provider]||it.provider)+'不能在网页里播放</b><br><small>直链只认播放器，浏览器会被网盘拒绝，这是正常现象。<br>请用飞牛影视 / Emby 通过 STRM 或 WebDAV 观看，<br>或点上方「复制直链」给外部播放器使用。</small>';
@@ -1728,6 +1728,7 @@ function saveStrm(){
 // ---- 网盘连接中心：全部网盘列表 + 引导式连接弹窗 ----
 var PV_LIST=[
   {pv:'quark',name:'夸克网盘'},
+  {pv:'uc',name:'UC网盘'},
   {pv:'115',name:'115网盘'},
   {pv:'baidu',name:'百度网盘'},
   {pv:'tianyi',name:'天翼云盘'},
@@ -1745,6 +1746,13 @@ var PV_CONN={
     scanNote:'夸克 302 直连需要<b>两样凭证</b>：<b>扫码</b>走夸克TV，播放时给 302 直链（不耗本机流量）；<b>Cookie</b>走夸克普通版，分享转存才用它。在这个弹窗里依次做完——做完一样不会关掉，接着做另一样，两样都齐才提示连接成功。',
     cookiePh:'夸克 Cookie 整串',
     steps:['电脑浏览器打开 <code>pan.quark.cn</code>，登录你的夸克','按键盘 <b>F12</b> → 点上面「网络 / Network」','左边随便点一个请求 → 请求头里找到 <b>Cookie</b> → 整串复制','粘到下面框里，点「导入连接」']},
+  uc:{name:'UC网盘',methods:['scan','cookie'],importApi:'/api/uc/import',
+    needBoth:true,
+    scanStart:'/api/login/uctv/start',scanPoll:'/api/login/uctv/poll',
+    scanSteps:['打开手机上的<b>UC 浏览器</b>或 <b>UC网盘 App</b>','用「扫一扫」扫下面的码','手机上点<b>「确认登录」</b>，本页面会自动变成已连接'],
+    scanNote:'UC 的播放路线是<b>转存 + TV 直链</b>：<b>扫码</b>拿 TV 凭证，播放时给 302 直链（不耗本机流量）；<b>Cookie</b> 负责把分享文件转存到你自己的网盘。两样都齐才能播。解析分享不需要任何凭证。',
+    cookiePh:'UC Cookie 整串',
+    steps:['电脑浏览器打开 <code>drive.uc.cn</code>，登录你的 UC 账号','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 请求头里找到 <b>Cookie</b> → 整串复制','粘到下面框里，点「导入连接」']},
   '115':{name:'115网盘',methods:['scan','cookie'],importApi:'/api/accounts/import',
     scanStart:'/api/login/115/start',scanPoll:'/api/login/115/poll',
     scanSteps:['打开手机 <b>115 App</b> → 右上角「+」→「扫一扫」','扫下面的码 → 手机上点<b>「确认登录」</b>','本页面自动变成「登录成功」'],
@@ -1772,9 +1780,9 @@ function loadAccts(){
     var t='<tr><th style="width:150px">网盘</th><th>状态</th><th style="width:100px;text-align:right">操作</th></tr>';
     for(var j=0;j<PV_LIST.length;j++){
       var p=PV_LIST[j],a=map[p.pv];
-      if(p.pv==='quark'){
-        // 夸克一个入口两种凭证：quark=Cookie（转存取流），quark_tv=扫码（302 直链）
-        var tv=map['quark_tv'];
+      if(p.pv==='quark'||p.pv==='uc'){
+        // 夸克/UC 都是一个入口两种凭证：Cookie（转存取流）+ *_tv（扫码，302 直链）
+        var tv=map[p.pv+'_tv'];
         if(a&&tv){
           t+='<tr><td><span class="tag '+(PVCLS[p.pv]||'')+'">'+esc(p.name)+'</span></td>'+
             '<td><span class="tag ok">✓ 已连接</span> <span class="cd">Cookie + 扫码（302）</span></td>'+

@@ -22,6 +22,7 @@ import (
 // qtvQRSession 一次夸克 TV 扫码会话。
 type qtvQRSession struct {
 	id          string
+	pv          string // 账号库 provider：quark_tv / uc_tv
 	qtv         *QuarkTV
 	queryToken  string
 	status      int // 0 等待扫码 / 1 已扫码待确认 / 2 已确认 / -1 过期 / -2 失败
@@ -58,8 +59,17 @@ func qtvQRGC() {
 //   - 已有 quark_tv 账号 → 复用账号里的设备号（重扫 = 刷新同一设备，不占新名额）；
 //   - 首次登录 → 生成一个持久化到数据目录的设备号（容器重启/重建都不变）。
 func startQRQuarkTV(as *AccountStore) (*qtvQRSession, error) {
+	return startQRTV(as, NewQuarkTV(qtvStableDeviceID(as), "", ""), "quark_tv")
+}
+
+// startQRUC 发起 UC TV 扫码会话（与夸克共用同一套会话/轮询机制）。
+func startQRUC(as *AccountStore) (*qtvQRSession, error) {
+	return startQRTV(as, NewUCTV(ucStableDeviceID(as), "", ""), "uc_tv")
+}
+
+// startQRTV 通用扫码会话：客户端由调用方构造，pv 决定落库到哪个 provider。
+func startQRTV(as *AccountStore, qtv *QuarkTV, pv string) (*qtvQRSession, error) {
 	qtvQRGC()
-	qtv := NewQuarkTV(qtvStableDeviceID(as), "", "")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	qrData, queryToken, err := qtv.QRStart(ctx)
@@ -71,6 +81,7 @@ func startQRQuarkTV(as *AccountStore) (*qtvQRSession, error) {
 	qrURI := "data:image/jpeg;base64," + qrData
 	s := &qtvQRSession{
 		id:         newID(),
+		pv:         pv,
 		qtv:        qtv,
 		queryToken: queryToken,
 		status:     0,
@@ -148,6 +159,7 @@ func (s *qtvQRSession) watch() {
 
 // qtvQRSnapshot 扫码会话快照（字段与 115 的 qrSnapshot 对齐，外加 qr 图）。
 type qtvQRSnapshot struct {
+	Provider     string
 	Status       int
 	Message      string
 	Done         bool
@@ -167,6 +179,7 @@ func pollQRQuarkTV(id string) (*qtvQRSnapshot, error) {
 		return nil, fmt.Errorf("会话不存在或已过期")
 	}
 	return &qtvQRSnapshot{
+		Provider:     s.pv,
 		Status:       s.status,
 		Message:      s.message,
 		Done:         s.done,
@@ -182,10 +195,15 @@ func pollQRQuarkTV(id string) (*qtvQRSnapshot, error) {
 // （首次生成后写盘，之后重启/重扫/容器重建都读同一个，保证一个部署
 // 只占夸克账号一个电视设备名额）。
 func qtvStableDeviceID(as *AccountStore) string {
-	if a := as.Get("quark_tv"); a != nil && a.DeviceID != "" {
+	return qtvStableDeviceIDFor(as, "quark_tv", "qtv_device_id")
+}
+
+// qtvStableDeviceIDFor 按 provider 取稳定设备号（文件按 provider 分开存）。
+func qtvStableDeviceIDFor(as *AccountStore, provider, filename string) string {
+	if a := as.Get(provider); a != nil && a.DeviceID != "" {
 		return a.DeviceID
 	}
-	p := filepath.Join(filepath.Dir(as.path), "qtv_device_id")
+	p := filepath.Join(filepath.Dir(as.path), filename)
 	if b, err := os.ReadFile(p); err == nil {
 		if id := strings.TrimSpace(string(b)); len(id) == 32 {
 			return id
@@ -238,7 +256,14 @@ func apiLoginPollQuark(as *AccountStore) http.HandlerFunc {
 		}
 		if snap.Done && snap.RefreshToken != "" {
 			// 落盘前先验证：用新 refresh_token 换一次 access_token 并探活
-			qtv := NewQuarkTV(snap.DeviceID, "", snap.RefreshToken)
+			var qtv *QuarkTV
+			label := "夸克TV（扫码登录）"
+			if snap.Provider == "uc_tv" {
+				qtv = NewUCTV(snap.DeviceID, "", snap.RefreshToken)
+				label = "UC TV（扫码登录）"
+			} else {
+				qtv = NewQuarkTV(snap.DeviceID, "", snap.RefreshToken)
+			}
 			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 			verr := qtv.RefreshToken(ctx)
 			cancel()
@@ -246,8 +271,8 @@ func apiLoginPollQuark(as *AccountStore) http.HandlerFunc {
 				resp["error"] = "凭证验证失败: " + verr.Error()
 			} else {
 				installAccount(as, Account{
-					Provider:    "quark_tv",
-					Label:       "夸克TV（扫码登录）",
+					Provider:    snap.Provider,
+					Label:       label,
 					Cookie:      snap.RefreshToken, // 单账号模型：Cookie 字段复用存 refresh_token
 					DeviceID:    snap.DeviceID,
 					AccessToken: qtv.accessTokenOrEmpty(),

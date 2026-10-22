@@ -62,11 +62,38 @@ const (
 
 // QuarkTV 电视端客户端：持有一台「电视设备」的登录态。
 // 与 PC 版 Quark（cookie）完全独立，两套凭证互不影响。
+// qtvConf 一套 TV 接口的配置。夸克与 UC 的 TV 接口同源、只差域名/密钥/通道，
+// 用同一份客户端代码参数化，避免复制两份 302 取链逻辑（一份维护、一处修 bug）。
+// 为 nil 或字段为空时回落到包级常量（夸克默认值），这样既有单测可继续覆盖变量。
+type qtvConf struct {
+	brand     string // 报错文案里的品牌名
+	apiBase   string
+	clientID  string
+	signKey   string
+	appVer    string
+	channel   string
+	codeAPI   string
+	accountPV string // 账号库里的 provider 标识
+}
+
+// uctvConf UC TV 版（值来自 OpenList drivers/quark_uc_tv 的 UCTV 注册块）。
+var uctvConf = &qtvConf{
+	brand:     "UC TV",
+	apiBase:   "https://open-api-drive.uc.cn",
+	clientID:  "5acf882d27b74502b7040b0c65519aa7",
+	signKey:   "l3srvtd7p42l0d0x1u8d7yc8ye9kki4d",
+	appVer:    "1.7.2.2",
+	channel:   "UCTVOFFICIALWEB",
+	codeAPI:   "http://api.extscreen.com/ucdrive",
+	accountPV: "uc_tv",
+}
+
 type QuarkTV struct {
 	mu           sync.Mutex
 	deviceID     string
 	accessToken  string
 	refreshToken string
+	conf         *qtvConf
 	hc           *http.Client
 	// onRefresh token 刷新成功后回调（供外层回写 AccountStore，避免重启后丢新 token）。
 	onRefresh func(accessToken, refreshToken string)
@@ -84,6 +111,71 @@ func NewQuarkTV(deviceID, accessToken, refreshToken string) *QuarkTV {
 		refreshToken: refreshToken,
 		hc:           &http.Client{Timeout: 20 * time.Second},
 	}
+}
+
+// NewUCTV 构造 UC TV 版客户端（与夸克共用取链逻辑，仅换配置）。
+func NewUCTV(deviceID, accessToken, refreshToken string) *QuarkTV {
+	if deviceID == "" {
+		deviceID = qtvGenDeviceID()
+	}
+	return &QuarkTV{
+		deviceID:     deviceID,
+		accessToken:  accessToken,
+		refreshToken: refreshToken,
+		conf:         uctvConf,
+		hc:           &http.Client{Timeout: 20 * time.Second},
+	}
+}
+
+// ---- 配置取值（nil/空 → 回落夸克包级常量，兼容既有单测）----
+
+func (q *QuarkTV) brand() string {
+	if q.conf != nil && q.conf.brand != "" {
+		return q.conf.brand
+	}
+	return "夸克TV"
+}
+
+func (q *QuarkTV) apiBase() string {
+	if q.conf != nil && q.conf.apiBase != "" {
+		return q.conf.apiBase
+	}
+	return qtvAPIBase
+}
+
+func (q *QuarkTV) clientID() string {
+	if q.conf != nil && q.conf.clientID != "" {
+		return q.conf.clientID
+	}
+	return qtvClientID
+}
+
+func (q *QuarkTV) signKey() string {
+	if q.conf != nil && q.conf.signKey != "" {
+		return q.conf.signKey
+	}
+	return qtvSignKey
+}
+
+func (q *QuarkTV) appVer() string {
+	if q.conf != nil && q.conf.appVer != "" {
+		return q.conf.appVer
+	}
+	return qtvAppVer
+}
+
+func (q *QuarkTV) channel() string {
+	if q.conf != nil && q.conf.channel != "" {
+		return q.conf.channel
+	}
+	return qtvChannel
+}
+
+func (q *QuarkTV) codeAPI() string {
+	if q.conf != nil && q.conf.codeAPI != "" {
+		return q.conf.codeAPI
+	}
+	return qtvCodeAPI
 }
 
 // qtvGenDeviceID 生成一个设备 ID（驱动：md5(时间戳字符串)）。
@@ -107,7 +199,7 @@ func (q *QuarkTV) DeviceID() string {
 // 算法已用 /oauth/authorize 实测验证（返回 HTTP 200 + 真二维码）。
 func (q *QuarkTV) qtvSign(method, pathname string) (tm, token, reqID string) {
 	timestamp := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)
-	tokenData := method + "&" + pathname + "&" + timestamp + "&" + qtvSignKey
+	tokenData := method + "&" + pathname + "&" + timestamp + "&" + q.signKey()
 	sum := sha256.Sum256([]byte(tokenData))
 	rid := md5.Sum([]byte(q.deviceID + timestamp))
 	return timestamp, hex.EncodeToString(sum[:]), hex.EncodeToString(rid[:])
@@ -118,7 +210,7 @@ func (q *QuarkTV) qtvDeviceParams(reqID, accessToken string) url.Values {
 	v := url.Values{}
 	v.Set("req_id", reqID)
 	v.Set("access_token", accessToken)
-	v.Set("app_ver", qtvAppVer)
+	v.Set("app_ver", q.appVer())
 	v.Set("device_id", q.deviceID)
 	v.Set("device_brand", qtvDeviceBrand)
 	v.Set("platform", qtvPlatform)
@@ -128,7 +220,7 @@ func (q *QuarkTV) qtvDeviceParams(reqID, accessToken string) url.Values {
 	v.Set("build_product", qtvBuildProduct)
 	v.Set("device_gpu", qtvDeviceGpu)
 	v.Set("activity_rect", "{}")
-	v.Set("channel", qtvChannel)
+	v.Set("channel", q.channel())
 	return v
 }
 
@@ -145,7 +237,7 @@ func (q *QuarkTV) qtvRequest(ctx context.Context, method, pathname string, param
 	for k, v := range params {
 		qv.Set(k, v)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, qtvAPIBase+pathname+"?"+qv.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, q.apiBase()+pathname+"?"+qv.Encode(), nil)
 	if err != nil {
 		return err
 	}
@@ -153,11 +245,11 @@ func (q *QuarkTV) qtvRequest(ctx context.Context, method, pathname string, param
 	req.Header.Set("User-Agent", qtvUA)
 	req.Header.Set("x-pan-tm", tm)
 	req.Header.Set("x-pan-token", token)
-	req.Header.Set("x-pan-client-id", qtvClientID)
+	req.Header.Set("x-pan-client-id", q.clientID())
 
 	resp, err := q.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("连接夸克TV接口失败：%w", err)
+		return fmt.Errorf("连接%s接口失败：%w", q.brand(), err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -166,7 +258,7 @@ func (q *QuarkTV) qtvRequest(ctx context.Context, method, pathname string, param
 	}
 	if out != nil {
 		if err := json.Unmarshal(body, out); err != nil {
-			return fmt.Errorf("夸克TV返回无法识别（HTTP %d）", resp.StatusCode)
+			return fmt.Errorf("%s返回无法识别（HTTP %d）", q.brand(), resp.StatusCode)
 		}
 	}
 	return nil
@@ -189,7 +281,7 @@ func (q *QuarkTV) QRStart(ctx context.Context) (qrData, queryToken string, err e
 	var out qtvAuthResp
 	err = q.qtvRequest(ctx, http.MethodGet, "/oauth/authorize", map[string]string{
 		"auth_type": "code",
-		"client_id": qtvClientID,
+		"client_id": q.clientID(),
 		"scope":     "netdisk",
 		"qrcode":    "1",
 		"qr_width":  "460",
@@ -199,7 +291,7 @@ func (q *QuarkTV) QRStart(ctx context.Context) (qrData, queryToken string, err e
 		return "", "", err
 	}
 	if out.QRData == "" {
-		return "", "", fmt.Errorf("夸克TV未返回二维码：%s", out.ErrorInfo)
+		return "", "", fmt.Errorf("%s未返回二维码：%s", q.brand(), out.ErrorInfo)
 	}
 	return out.QRData, out.QueryToken, nil
 }
@@ -209,7 +301,7 @@ func (q *QuarkTV) QRStart(ctx context.Context) (qrData, queryToken string, err e
 func (q *QuarkTV) QRCode(ctx context.Context, queryToken string) (code string, err error) {
 	var out qtvAuthResp
 	err = q.qtvRequest(ctx, http.MethodGet, "/oauth/code", map[string]string{
-		"client_id":   qtvClientID,
+		"client_id":   q.clientID(),
 		"scope":       "netdisk",
 		"query_token": queryToken,
 	}, &out)
@@ -250,7 +342,7 @@ func (q *QuarkTV) qtvExchangeToken(ctx context.Context, codeOrRefresh string, is
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, qtvCodeAPI+"/token", strings.NewReader(string(b)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.codeAPI()+"/token", strings.NewReader(string(b)))
 	if err != nil {
 		return err
 	}
@@ -261,7 +353,7 @@ func (q *QuarkTV) qtvExchangeToken(ctx context.Context, codeOrRefresh string, is
 	req.Header.Set("User-Agent", qtvUA)
 	resp, err := q.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("连接夸克TV登录服务失败：%w", err)
+		return fmt.Errorf("连接%s登录服务失败：%w", q.brand(), err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -270,7 +362,7 @@ func (q *QuarkTV) qtvExchangeToken(ctx context.Context, codeOrRefresh string, is
 	}
 	var out qtvTokenResp
 	if err := json.Unmarshal(data, &out); err != nil {
-		return fmt.Errorf("夸克TV登录返回无法识别（HTTP %d）：%s", resp.StatusCode, qtvSnippet(data))
+		return fmt.Errorf("%s登录返回无法识别（HTTP %d）：%s", q.brand(), resp.StatusCode, qtvSnippet(data))
 	}
 	if out.Code != 200 || out.Data.RefreshToken == "" {
 		// 注意：无效 code 时顶层 code 仍是 200，真错误在 data.status/errno/error_info
@@ -282,7 +374,7 @@ func (q *QuarkTV) qtvExchangeToken(ctx context.Context, codeOrRefresh string, is
 		if msg == "" {
 			msg = fmt.Sprintf("code=%d", out.Code)
 		}
-		return fmt.Errorf("夸克TV登录失败：%s", msg)
+		return fmt.Errorf("%s登录失败：%s", q.brand(), msg)
 	}
 	q.mu.Lock()
 	q.accessToken = out.Data.AccessToken
@@ -334,7 +426,7 @@ func (q *QuarkTV) RefreshToken(ctx context.Context) error {
 	rt := q.refreshToken
 	q.mu.Unlock()
 	if rt == "" {
-		return fmt.Errorf("夸克TV未登录（无 refresh_token）")
+		return fmt.Errorf("%s未登录（无 refresh_token）", q.brand())
 	}
 	return q.qtvExchangeToken(ctx, rt, true)
 }
@@ -389,10 +481,10 @@ func (q *QuarkTV) qtvFileLink(ctx context.Context, method, fid string) (*qtvFile
 				return &out2, nil
 			}
 		}
-		return nil, fmt.Errorf("夸克TV登录态失效，请重新扫码：%s", out.ErrorInfo)
+		return nil, fmt.Errorf("%s登录态失效，请重新扫码：%s", q.brand(), out.ErrorInfo)
 	}
 	if out.Errno != 0 || out.Status >= 400 {
-		return nil, fmt.Errorf("夸克TV：%s", out.ErrorInfo)
+		return nil, fmt.Errorf("%s：%s", q.brand(), out.ErrorInfo)
 	}
 	return &out, nil
 }
@@ -405,7 +497,7 @@ func (q *QuarkTV) DownloadURL(ctx context.Context, fid string) (string, error) {
 		return "", err
 	}
 	if out.Data.DownloadURL == "" {
-		return "", fmt.Errorf("夸克TV未返回下载地址")
+		return "", fmt.Errorf("%s未返回下载地址", q.brand())
 	}
 	return out.Data.DownloadURL, nil
 }
@@ -430,7 +522,7 @@ func (q *QuarkTV) StreamingURL(ctx context.Context, fid string) (string, error) 
 		}
 	}
 	if best == "" {
-		return "", fmt.Errorf("夸克TV未返回转码流地址")
+		return "", fmt.Errorf("%s未返回转码流地址", q.brand())
 	}
 	return best, nil
 }

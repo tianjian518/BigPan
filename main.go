@@ -1585,6 +1585,10 @@ func main() {
 	// 夸克 TV 扫码登录（与夸克普通 Cookie 登录并存，同一 provider 两种登录方式）
 	mux.HandleFunc("/api/login/quark/start", requireAuth(apiLoginStartQuark(as)))
 	mux.HandleFunc("/api/login/quark/poll", requireAuth(apiLoginPollQuark(as)))
+	// UC 网盘：扫码（TV 302 取流）+ Cookie（转存），与夸克同构
+	mux.HandleFunc("/api/login/uctv/start", requireAuth(apiLoginStartUC(as)))
+	mux.HandleFunc("/api/login/uctv/poll", requireAuth(apiLoginPollQuark(as)))
+	mux.HandleFunc("/api/uc/import", requireAuth(apiUCImport(as)))
 	// 天翼云盘扫码登录（accessToken 制，无刷新，过期重扫）
 	mux.HandleFunc("/api/login/tianyi/start", requireAuth(apiLoginStartTianyi))
 	mux.HandleFunc("/api/login/tianyi/poll", requireAuth(apiLoginPollTianyi(as)))

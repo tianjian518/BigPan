@@ -101,6 +101,8 @@ func providerCN(p string) string {
 		return "百度"
 	case "mobile139":
 		return "移动"
+	case "uc":
+		return "UC"
 	default:
 		return p
 	}

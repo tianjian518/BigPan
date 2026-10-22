@@ -645,6 +645,8 @@ func shareURL(provider, shareID, passcode string) string {
 		return "https://cloud.189.cn/t/" + shareID
 	case "mobile139":
 		return "https://yun.139.com/shareweb/#/w/i/" + shareID + q("pwd", passcode)
+	case "uc":
+		return "https://drive.uc.cn/s/" + shareID + q("pwd", passcode)
 	}
 	return ""
 }
