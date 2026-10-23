@@ -1002,6 +1002,8 @@ func autoRefreshCycle(store *Store, self string) {
 		if _, added, _, err := refreshShareOnce(store, m.Provider, m.ShareID, m.Passcode, m.Category); err != nil {
 			// 单个分享失败（网盘抽风/登录过期）不拖垮整轮，下轮再试
 			log.Printf("[追更] %s/%s 自动刷新失败（下轮重试）: %v", m.Provider, m.Show, err)
+			// 追更同样可能撞上「分享已失效」：这是确定性结论，当场记账。
+			noteShareGone(m.Provider, m.ShareID, err)
 			continue
 		} else {
 			done++

@@ -14,7 +14,9 @@ package main
 //
 // 防误删（这是本功能最关键的部分）：
 //   - 只认「分享本身没了」类错误；网络超时/限流/登录过期/账号未导入一律不算。
-//   - 必须连续 healthFailLimit 轮都确认失效才动手（3 小时一轮 → 6 小时）。
+//   - 同一轮内隔 2 秒独立复查一次，两次都判定失效才动手（防风控误报）。
+//   - 首轮只等 30 秒、默认每 30 分钟一轮 —— 服务重启后立刻验一遍，
+//     不让失效分享在媒体库里躺几个小时（2026-10-23 用户实测后改）。
 //   - 同一轮里多数分享同时报失效 → 判定为账号级故障（登录过期/风控），整轮不清理。
 //   - 只按 (provider, shareID) 精确删除，绝不碰别的分享的条目。
 // ---------------------------------------------------------------------------
@@ -30,8 +32,36 @@ import (
 	"time"
 )
 
-// healthFailLimit 连续多少轮确认失效才清理。
+// healthFailLimit 确认失效需要几次独立证据。
+//
+// 证据来源有两个：① 定时巡检（同轮内隔 2 秒二次确认通过后才记 1 次）；
+// ② 播放 / 追更路径命中 shareGone（同样只记 1 次）。凑满 2 次即清理。
+// 最坏情况是「播放失败一次 + 30 分钟后的巡检一次」，而不是原来的 6 小时。
 const healthFailLimit = 2
+
+// noteShareGone 播放/追更路径遇到「分享本身没了」时立刻记账。
+//
+// 2026-10-23 补的缺口：此前只有定时巡检会写 FailCount，播放失败只进 play_stats
+// 统计。用户实测：一个已失效的分享被客户端重试打了 80 次播放失败、追更也报了
+// 「分享地址已失效」，巡检账上仍是 0 —— 结果它在媒体库里躺了一整天没被清掉。
+//
+// 结论：任何路径拿到「分享已失效」这个确定性结论，都必须当场记账；
+// 清理交给下一轮巡检，或累计到阈值时由巡检执行。
+func noteShareGone(provider, shareID string, err error) {
+	if globalShares == nil || shareID == "" || err == nil || !shareGone(err) {
+		return
+	}
+	m := globalShares.Get(provider, shareID)
+	if m == nil || m.FailCount >= healthFailLimit {
+		return // 没有追更登记，或已经记满待清 —— 不重复刷
+	}
+	m.FailCount++
+	m.LastCheck = time.Now()
+	m.LastError = err.Error()
+	globalShares.Put(*m)
+	log.Printf("[失效] %s/%s 命中失效（第 %d/%d 次，来源：播放/追更）：%v",
+		provider, m.Show, m.FailCount, healthFailLimit, err)
+}
 
 // healthLock 保护最近一次巡检结果（给管理接口查询）。
 var healthLock sync.Mutex
@@ -70,13 +100,16 @@ func startShareHealthChecker(store *Store, every time.Duration, self string) {
 	// 【防崩】以前是裸 go func：healthCycle 里一次 panic（网盘返回没预料到的
 	// JSON 结构、空指针……）整个巡检循环静默死亡 —— 服务还通，但再也不巡检了。
 	// goSafeLoop 崩溃后自动重启循环（重启会重走首轮延迟，缓一手更稳）。
+	//
+	// 首轮只等 30 秒（原 10 分钟）：重启后立刻把库里的分享验一遍，别让失效分享
+	// 继续躺在媒体库里。2026-10-23 用户实测：一天内部署重启多次，每次都要重新
+	// 等 10 分钟 + 3 小时周期 + 2 轮，等于永远清不掉。
+	first := 30 * time.Second
+	if every < first {
+		first = every
+	}
+	log.Printf("[巡检] 已开启：%v 后首轮，之后每 %v 全量扫一遍（同轮二次确认，确认失效即清理）", first, every)
 	goSafeLoop("巡检", time.Minute, func() {
-		first := 10 * time.Minute
-		if every < first {
-			first = every
-		}
-		log.Printf("[巡检] 分享失效巡检已开启：%v 后首轮，之后每 %v 全量扫一遍（连续 %d 轮确认失效才清理）",
-			first, every, healthFailLimit)
 		time.Sleep(first)
 		t := time.NewTicker(every)
 		defer t.Stop()
@@ -165,6 +198,14 @@ func healthCycle(store *Store, self string) healthState {
 				log.Printf("[巡检] %s/%s 计数已清零（本轮错误不属于失效类）", m.Provider, m.Show)
 			}
 			log.Printf("[巡检] %s/%s 探测失败（非失效，不计数）：%v", m.Provider, m.Show, err)
+			continue
+		}
+		// 同轮二次确认（2026-10-23）：分享失效虽属确定性错误，但网盘风控也可能
+		// 返回同样文案。隔 2 秒独立再探测一次，两次都判定失效才计数 ——
+		// 有了这一步，单轮即可定生死，用户不必再等一个完整周期（原 3 小时）。
+		time.Sleep(2 * time.Second)
+		if _, _, err2 := p.RefreshShare(m.ShareID, m.Passcode); err2 == nil || !shareGone(err2) {
+			log.Printf("[巡检] %s/%s 首检报失效、复核未复现（%v），本轮不计数", m.Provider, m.Show, err2)
 			continue
 		}
 		m.FailCount++

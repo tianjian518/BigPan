@@ -52,7 +52,7 @@ var (
 	flagPass    = flag.String("pass", "admin", "管理界面密码")
 	flagRefresh = flag.Int("refresh", 60, "追更自动刷新间隔（分钟）：到点自动重扫所有追更中的分享，0=关闭")
 	flagSTRM    = flag.String("strm", "/data/strm", "STRM 导出目录（生成给飞牛影视等媒体库的 .strm 目录树）")
-	flagHealth  = flag.Int("health", 180, "分享失效巡检间隔（分钟）：全量探测所有已导入分享，失效则删除条目与 STRM，0=关闭")
+	flagHealth  = flag.Int("health", 30, "分享失效巡检间隔（分钟）：全量探测所有已导入分享，失效则删除条目与 STRM，0=关闭")
 )
 
 // httpClient 所有网盘 API 调用的公共客户端。
@@ -413,6 +413,8 @@ func resolveDirectURL(it *Item) (string, error) {
 		rp, err := p.ResolvePlay(it)
 		if err != nil {
 			statPlay(it.Provider, false, err)
+			// 播放已经拿到「分享没了」的确切结论，当场记账，不等定时巡检。
+			noteShareGone(it.Provider, it.ShareID, err)
 			return "", err
 		}
 		url, ptUA, cookie = rp.URL, rp.UA, rp.Cookie
