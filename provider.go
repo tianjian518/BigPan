@@ -1,5 +1,7 @@
 package main
 
+import "strings"
+
 // ---------------------------------------------------------------------------
 // 网盘接入层（只做「辅路」：分享链接 → 虚拟盘 → 不占空间）
 //
@@ -103,7 +105,10 @@ func providerCN(p string) string {
 		return "移动"
 	case "uc":
 		return "UC"
-	default:
-		return p
 	}
+	// 豆包多账号：doubao1..doubaoN 各算一个独立网盘
+	if strings.HasPrefix(p, "doubao") {
+		return "豆包" + strings.TrimPrefix(p, "doubao")
+	}
+	return p
 }

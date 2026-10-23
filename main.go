@@ -1651,6 +1651,7 @@ func main() {
 	mux.HandleFunc("/api/strm/rebuild", requireAuth(apiSTRMRebuild(store, self)))
 	mux.HandleFunc("/api/strm/config", requireAuth(apiSTRMConfig(store, self)))
 	mux.HandleFunc("/api/accounts/import", requireAuth(apiAccountImport(as)))
+	mux.HandleFunc("/api/doubao/browse", requireAuth(apiDoubaoBrowse(as)))
 	mux.HandleFunc("/api/accounts", requireAuth(apiAccounts(as)))
 	mux.HandleFunc("/api/accounts/", requireAuth(apiAccounts(as)))
 	mux.Handle("/dav/", davGuard(dav, store, self))

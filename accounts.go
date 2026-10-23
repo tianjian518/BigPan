@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -446,6 +447,26 @@ func apiAccountImport(as *AccountStore) http.HandlerFunc {
 		req.Cookie = strings.TrimSpace(req.Cookie)
 		if req.Provider == "" || req.Cookie == "" {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "凭证不能为空"})
+			return
+		}
+
+		// —— 豆包多账号：doubao1..doubaoN，一个槽位一个账号 ——
+		// 只认 sessionid（30 天有效），整段 Cookie 直接存也不影响。
+		if strings.HasPrefix(req.Provider, "doubao") {
+			cli := newDoubao(req.Cookie)
+			_, children, err := cli.dbHome()
+			if err != nil {
+				writeJSON(w, map[string]interface{}{"ok": false, "error": "Cookie 验证失败：" + err.Error()})
+				return
+			}
+			installAccount(as, Account{
+				Provider: req.Provider,
+				Label:    providerCN(req.Provider) + "（" + strconv.Itoa(len(children)) + " 个顶层目录）",
+				Cookie:   req.Cookie,
+				LoginAt:  time.Now(),
+			})
+			resetDoubaoClients()
+			writeJSON(w, map[string]interface{}{"ok": true, "detail": "已连上，根目录 " + strconv.Itoa(len(children)) + " 项"})
 			return
 		}
 

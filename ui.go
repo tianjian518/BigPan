@@ -256,7 +256,7 @@ table tr:hover td{background:#f7f9fc}
 .gcard .gn{font-size:13.5px;font-weight:500;line-height:1.5;margin-top:11px;max-height:3.9em;overflow:hidden;word-break:break-all}
 .gcard .gs{font-size:12.5px;color:var(--mut);margin-top:6px}
 .tag{display:inline-flex;align-items:center;background:var(--pri2);color:var(--pri);border-radius:6px;font-size:12px;padding:2.5px 9px;font-weight:600;white-space:nowrap}
-.tag.q{background:#e8f1ff;color:#1d6fd8}.tag.n{background:#fff2e0;color:#d97706}.tag.b{background:#e8f1ff;color:#1d6fd8}
+.tag.q{background:#e8f1ff;color:#1d6fd8}.tag.d{background:#e6f7ef;color:#0e9f6e}.tag.n{background:#fff2e0;color:#d97706}.tag.b{background:#e8f1ff;color:#1d6fd8}
 .tag.m{background:#e6f7ee;color:#18a058}.tag.t{background:#e8f8fb;color:#0891b2}
 /* 状态徽章（批量导入表）：一眼分辨 待导入/已导入过/失败 */
 .tag.ok{background:#e6f7ee;color:#18a058;border-color:#bfe6cf}
@@ -432,8 +432,25 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <textarea id="batchText" placeholder="https://cloud.189.cn/t/xxxx（访问码：abcd）&#10;https://pan.quark.cn/s/xxxx&#10;https://pan.baidu.com/s/xxxx?pwd=abcd" style="width:100%;height:104px;margin-top:10px;box-sizing:border-box;font-size:13px;line-height:1.6;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--fg)"></textarea>
         <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
           <button onclick="batchParse()">解析</button>
+          <button class="gray" onclick="openDbBrowse()">浏览豆包盘</button>
           <input type="text" id="sharePwd" placeholder="提取码(选填)" style="width:140px">
           <span class="sub">支持 夸克 / 百度 / 115 / 移动 / 天翼。访问码直接跟在链接后面（如「（访问码：xx11）」）；只粘一条时也可以填在左边框里。</span>
+        </div>
+        <div id="dbBrowse" style="display:none;margin-top:12px">
+          <div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg2)">
+            <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+              <b style="font-size:13px">浏览豆包盘</b>
+              <select id="dbSlot" onchange="dbGo('')" style="width:110px">
+                <option value="doubao1">豆包1</option><option value="doubao2">豆包2</option>
+                <option value="doubao3">豆包3</option><option value="doubao4">豆包4</option>
+              </select>
+              <span id="dbCrumb" class="sub" style="flex:1">根目录</span>
+              <button class="mini gray" onclick="dbGo('')">回根目录</button>
+              <button class="mini gray" onclick="dbClose()">关闭</button>
+            </div>
+            <div id="dbList" style="margin-top:8px"></div>
+            <div class="sub" style="margin-top:8px">点「导入此目录」会自动解析并把里面的视频全部列出来，确认后再入库。自己的盘不需要分享、不会被删。</div>
+          </div>
         </div>
         <div id="batchOut" style="margin-top:12px"></div>
       </div>
@@ -619,6 +636,11 @@ function pvLabel(name){
   return name;
 }
 var PVCLS={quark:'q','115':'n',mobile139:'m',tianyi:'t',baidu:'b',uc:'u'};
+// 豆包多账号：一个账号一张卡，doubao1..doubao4
+[1,2,3,4].forEach(function(i){
+  var pv='doubao'+i, n='豆包'+i;
+  PVCN[pv]=n; PVSHORT[pv]=n; PVCLS[pv]='d';
+});
 var VIDEO_EXTS=/\.(mkv|mp4|ts|avi|mov|wmv|flv|webm|rmvb|iso|m2ts)$/i;
 function $(x){return document.getElementById(x)}
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML}
@@ -802,9 +824,9 @@ function batchSplit(text){
   var out=[];
   String(text||'').split(/[\n\r;；]+/).forEach(function(line){
     line=line.replace(/^\s*\d+[\.、．)）]\s*/,'');
-    var parts=line.split(/(?=https?:\/\/)/);
+    var parts=line.split(/(?=https?:\/\/|doubao:\/\/)/);
     for(var i=0;i<parts.length;i++){
-      var k=parts[i].indexOf('http');
+      var k=parts[i].search(/https?:\/\/|doubao:\/\//);
       if(k<0)continue;
       var u=parts[i].slice(k).trim();
       if(u)out.push(u);
@@ -813,6 +835,35 @@ function batchSplit(text){
   return out;
 }
 
+// ---- 浏览自己的豆包盘（伪链接 doubao://<槽位>/<node_id>）----
+var DB_STACK=[];
+function openDbBrowse(){ $('dbBrowse').style.display=''; DB_STACK=[]; dbGo(''); }
+function dbClose(){ $('dbBrowse').style.display='none'; }
+function dbGo(nodeId){
+  var slot=$('dbSlot').value||'doubao1';
+  if(!nodeId)DB_STACK=[];
+  $('dbList').innerHTML='<div class="loading"><span class="spin"></span>读取中…</div>';
+  fetch('/api/doubao/browse?provider='+encodeURIComponent(slot)+'&node_id='+encodeURIComponent(nodeId||''))
+   .then(function(r){return r.json()}).then(function(d){
+     if(!d.ok){ $('dbList').innerHTML='<div class="sub">'+esc(d.error||'读取失败')+'</div>'; return; }
+     var path=DB_STACK.map(function(x){return x.name}).join(' / ')||'根目录';
+     $('dbCrumb').textContent=path;
+     var t='';
+     (d.items||[]).forEach(function(it){
+       t+='<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line)">';
+       t+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.is_dir?'📁 ':(it.video?'🎬 ':'📄 '))+esc(it.name)+'</span>';
+       t+='<span class="sub" style="white-space:nowrap">'+(it.is_dir?'':humanSize(it.size))+'</span>';
+       if(it.is_dir){
+         t+='<button class="mini" onclick="dbEnter(\''+escA(it.id)+'\',\''+escA(it.name)+'\')">进入</button>';
+         t+='<button class="mini gray" onclick="dbPick(\''+escA(it.link)+'\')">导入此目录</button>';
+       }
+       t+='</div>';
+     });
+     $('dbList').innerHTML=t||'<div class="sub">（这个目录是空的）</div>';
+   }).catch(function(){ $('dbList').innerHTML='<div class="sub">读取失败，检查 Cookie 是否过期</div>'; });
+}
+function dbEnter(id,name){ DB_STACK.push({id:id,name:name}); dbGo(id); }
+function dbPick(link){ $('batchText').value=link; dbClose(); batchParse(); }
 function batchParse(){
   var links=batchSplit($('batchText').value);
   if(!links.length){toast('没识别到链接，一行一条，以 http 开头');return}
@@ -1640,7 +1691,7 @@ function openPlayer(id){
   //   百度      —— 默认 302 会被拒，只有打开「浏览器代取」才走中转
   //   移动/115  —— 只给 HLS/被封杀，不放开
   var relayable=(it.provider==='baidu'&&BAIDURELAY)||it.provider==='tianyi';
-  if(it.provider&&it.provider!=='quark'&&it.provider!=='uc'&&!it.url&&!relayable){
+  if(it.provider&&it.provider!=='quark'&&it.provider!=='uc'&&it.provider.indexOf('doubao')!==0&&!it.url&&!relayable){
     PVHINT=true;
     $('pv').removeAttribute('src');try{$('pv').load()}catch(e){}
     var tip='<b>'+(PVCN[it.provider]||it.provider)+'不能在网页里播放</b><br><small>直链只认播放器，浏览器会被网盘拒绝，这是正常现象。<br>请用飞牛影视 / Emby 通过 STRM 或 WebDAV 观看，<br>或点上方「复制直链」给外部播放器使用。</small>';
@@ -1767,6 +1818,10 @@ function saveStrm(){
 var PV_LIST=[
   {pv:'quark',name:'夸克网盘'},
   {pv:'uc',name:'UC网盘'},
+  {pv:'doubao1',name:'豆包①'},
+  {pv:'doubao2',name:'豆包②'},
+  {pv:'doubao3',name:'豆包③'},
+  {pv:'doubao4',name:'豆包④'},
   {pv:'115',name:'115网盘'},
   {pv:'baidu',name:'百度网盘'},
   {pv:'tianyi',name:'天翼云盘'},
@@ -1809,6 +1864,15 @@ var PV_CONN={
     cookiePh:'Authorization 里 Basic 后面那串',
     steps:['电脑浏览器打开 <code>yun.139.com</code>，登录移动云盘','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 请求头里找 <b>Authorization</b>','复制 <code>Basic</code> 后面那一长串（整串粘也行）→ 点「导入连接」']}
 };
+// 豆包多账号：一个账号一张卡，各自独立 Cookie / 独立文件树。
+[1,2,3,4].forEach(function(i){
+  var pv='doubao'+i, nm='豆包'+i;
+  PV_CONN[pv]={name:nm,methods:['cookie'],importApi:'/api/accounts/import',
+    cookiePh:'豆包 Cookie 整串（只留 sessionid 也能用）',
+    steps:['电脑浏览器打开 <code>www.doubao.com</code>，登录<b>这个账号</b>','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 请求头里找 <b>Cookie</b> → 整串复制','粘到下面框里，点「导入连接」'],
+    note:'豆包一个账号就是一张卡：有几个号就连几张，各管各的文件。<b>Cookie 约 30 天有效</b>，过期重粘一次。连上之后可以在「导入」页点「<b>浏览豆包盘</b>」，直接挑自己网盘里的目录导入 —— 不需要分享、不怕分享失效。'};
+});
+
 // 渲染全部网盘列表：连了的亮状态+退出按钮，没连的出「连接」按钮
 function loadAccts(){
   fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){

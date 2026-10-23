@@ -648,6 +648,12 @@ func shareURL(provider, shareID, passcode string) string {
 	case "uc":
 		return "https://drive.uc.cn/s/" + shareID + q("pwd", passcode)
 	}
+	if strings.HasPrefix(provider, "doubao") {
+		if shareID == "" {
+			return "" // 自己盘里的条目没有分享链接
+		}
+		return "https://www.doubao.com/drive/s/" + shareID
+	}
 	return ""
 }
 
