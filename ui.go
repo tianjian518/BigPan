@@ -1326,9 +1326,11 @@ function doChangeCat(){
     if(d.ok){
       toast('已改到「'+(d.category||'不分类')+'」，'+d.moved+' 个文件换了位置');
       loadShares();
-      // 在媒体库里改的：目录结构变了，跳回根目录刷新一下
+      // 在媒体库里改的：只刷新数据，停在当前目录。
+      // 2026-10-23 用户反馈：以前这里 CURPATH=[]，每改一个文件夹就跳回根目录，
+      // 在「移动/电视剧/国产剧」下面逐个子文件夹分类时完全没法用。
       var pl=document.getElementById('pg-lib');
-      if(pl&&pl.style.display!=='none'){CURPATH=[];loadLib();}
+      if(pl&&pl.style.display!=='none')loadLibKeepPath();
     }
     else toast(d.error||'改分类失败');
   }).catch(function(){toast('改分类失败')});
@@ -1406,6 +1408,19 @@ function libPagerHtml(total,page,size,fn){
   return h;
 }
 function goLibPage(p){ LIBPAGE=p; paintLib(); try{window.scrollTo({top:0,behavior:'smooth'})}catch(e){window.scrollTo(0,0)} }
+// 改分类后刷新媒体库，但停在当前目录。
+// 分类会把整部剧搬到新分类下：若当前所在目录本身被搬走，就逐级回退到
+// 仍然存在的最深一层，而不是粗暴跳回根目录。
+function loadLibKeepPath(){
+  LIBQ=($('libQ')?$('libQ').value.trim().toLowerCase():'');
+  LIBPAGE=1;
+  $('libBox').innerHTML='<div class="loading"><span class="spin"></span>加载中…</div>';
+  loadItems(function(){
+    buildTree();
+    while(CURPATH.length && !nodeAt(CURPATH))CURPATH.pop();
+    paintLib();
+  });
+}
 function paintLib(){
   $('selbar').style.display='none';$('selbar').classList.remove('show');
   if(LIBQ){
@@ -1426,7 +1441,8 @@ function paintLib(){
   renderLib();
 }
 function renderLib(){
-  var node=nodeAt(CURPATH)||TREE;
+  var node=nodeAt(CURPATH);
+  if(!node){CURPATH=[];node=TREE;}
   var cr='<a class="cb" onclick="goPath([]);return false">'+ICO.home+' 根目录</a>';
   var acc=[];
   for(var i=0;i<CURPATH.length;i++){ acc.push(CURPATH[i]); cr+='<span class="csep">/</span><a class="cb '+(i===CURPATH.length-1?'cur':'')+'" onclick="goPath('+escA(JSON.stringify(acc))+');return false">'+esc(cleanShow(CURPATH[i]))+'</a>'; }
