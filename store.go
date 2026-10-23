@@ -111,8 +111,17 @@ func (i *Item) migrate() {
 }
 
 // IsShare 表示该条目是「分享直连」类型（虚拟盘）。
+//
+// 豆包特殊：它读的是用户**自己的盘**，条目没有 share_id，但同样要实时
+// 向网盘换直链（不换就没有地址），所以按 provider 前缀也算 share。
 func (i *Item) IsShare() bool {
-	return i.Provider != "" && i.ShareID != "" && i.FileID != ""
+	if i.Provider == "" || i.FileID == "" {
+		return false
+	}
+	if i.ShareID != "" {
+		return true
+	}
+	return strings.HasPrefix(i.Provider, "doubao")
 }
 
 // NeedsLiveURL 表示播放时需要实时换取直链。
