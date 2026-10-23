@@ -310,8 +310,8 @@ func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile,
 			// 连带它下面的所有视频一起消失（实测少 3 个文件就是这么来的）。
 			queue = append([]job{j}, queue...)
 			dbScanPut(snapshot())
-			return "", nil, fmt.Errorf("%w\n已扫到 %d 个目录 / %d 个视频，进度已保存；恢复后再点一次导入会接着扫，不用从头开始",
-				err, len(seen), len(files))
+			return "", nil, fmt.Errorf("豆包限流了（请求太密，不是文件出错）。已扫到 %d 个目录 / %d 个视频，进度已保存。\n等 3~5 分钟再点一次「解析」，会从这里接着扫，不用从头开始。\n原始信息：%w",
+				len(seen), len(files), err)
 		}
 		// 单层且只有一个目录时，用它的名字当剧名（和 UC 的折叠规则一致）
 		if j.ID == nodeID && len(list) == 1 && list[0].IsDir() {
@@ -403,7 +403,8 @@ func scanDoubaoShare(cli *Doubao, slot, shareID string) (string, []ShareFile, er
 				ids = append(ids, id)
 			}
 			dbScanPut(&dbScanState{Key: key, Title: title, Queue: append([]job(nil), queue...), Seen: ids, Files: files})
-			return "", nil, fmt.Errorf("%w\n已扫到 %d 个目录 / %d 个视频，进度已保存；恢复后再点一次导入会接着扫", err, len(seen), len(files))
+			return "", nil, fmt.Errorf("豆包限流了（请求太密，不是文件出错）。已扫到 %d 个目录 / %d 个视频，进度已保存。\n等 3~5 分钟再点一次「解析」，会从这里接着扫。\n原始信息：%w",
+				len(seen), len(files), err)
 		}
 		for _, n := range list {
 			p := j.Prefix + "/" + n.Name

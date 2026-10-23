@@ -470,9 +470,14 @@ func apiAccountImport(as *AccountStore) http.HandlerFunc {
 			if old := as.Get(req.Provider); old != nil && old.Cookie == req.Cookie {
 				alias = old.Alias
 			}
+			// 昵称优先（豆包 /passport/account/info/v2/ 能拿到），拿不到退回 uid 短码
+			label := doubaoTag(req.Cookie)
+			if nm, _, uerr := cli.dbUserInfo(); uerr == nil && nm != "" {
+				label = nm
+			}
 			installAccount(as, Account{
 				Provider: req.Provider,
-				Label:    doubaoTag(req.Cookie),
+				Label:    label,
 				Alias:    alias,
 				Cookie:   req.Cookie,
 				LoginAt:  time.Now(),

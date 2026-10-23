@@ -691,8 +691,11 @@ function loadAccNames(cb){
     (d.accounts||[]).forEach(function(a){
       if((a.provider||'').indexOf('doubao')!==0)return;
       var slot='豆包'+a.provider.slice(6);
-      // 没起别名时也要带短码：否则 4 个号在媒体库里全叫「豆包1/2/3/4」，分不清
-      var lbl=a.alias?a.alias:(a.tag?slot+' · '+a.tag:slot);
+      // 优先级：自己起的别名 > 豆包昵称（导入时抓的）> 「豆包N · uid短码」
+      // 老数据的 label 是「豆包1（12 个顶层目录）」这种，不能拿来当名字
+      var nice=a.alias||'';
+      if(!nice&&a.label&&!/^豆包\d+[（(]/.test(a.label))nice=a.label;
+      var lbl=nice||(a.tag?slot+' · '+a.tag:slot);
       DB_NAMES[a.provider]=a.alias||slot;
       PVCN[a.provider]=lbl;
       PVSHORT[a.provider]=lbl;
@@ -894,15 +897,16 @@ function paintDoubao(){
     var t='';
     for(var i=1;i<=4;i++){
       var pv='doubao'+i, a=map[pv];
-      var auto=a&&(a.alias||a.tag||a.label||'');
-      DB_NAMES[pv]=a&&a.alias?a.alias:('豆包'+i);
+      var niceName='';
+      if(a){ niceName=a.alias||''; if(!niceName&&a.label&&!/^豆包\d+[（(]/.test(a.label))niceName=a.label; }
+      DB_NAMES[pv]=niceName||('豆包'+i);
       t+='<div style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line);flex-wrap:wrap">';
       t+='<b style="min-width:64px">'+esc(DB_NAMES[pv])+'</b>';
       if(a){
         // 起过别名就把「豆包N · 短码」放小字里，没起名就直接显示短码
         t+='<span class="tag d">已连接</span>';
         t+='<span class="sub" title="短码来自 Cookie 里的 uid_tt，用来区分不同豆包账号">'+
-           esc(a.alias?('豆包'+i+(a.tag?' · '+a.tag:'')):(a.tag||a.label||''))+'</span>';
+           esc(niceName?('豆包'+i+(a.tag?' · '+a.tag:'')):(a.tag||a.label||''))+'</span>';
       }else{
         t+='<span class="tag off">未连接</span>';
       }

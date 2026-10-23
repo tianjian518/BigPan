@@ -53,7 +53,7 @@ var (
 	flagRefresh = flag.Int("refresh", 60, "追更自动刷新间隔（分钟）：到点自动重扫所有追更中的分享，0=关闭")
 	flagSTRM    = flag.String("strm", "/data/strm", "STRM 导出目录（生成给飞牛影视等媒体库的 .strm 目录树）")
 	flagHealth  = flag.Int("health", 30, "分享失效巡检间隔（分钟）：全量探测所有已导入分享，失效则删除条目与 STRM，0=关闭")
-	flagDbGap   = flag.Int("doubao-gap", 1000, "豆包请求间隔（毫秒）：调大更不容易被风控但扫描更慢；实测 400 会在 300 个目录左右被打断")
+	flagDbGap   = flag.Int("doubao-gap", 2000, "豆包请求间隔（毫秒）：调大更不容易被风控但扫描更慢；家宽 1 秒约 280 个目录撞线，2 秒可连续扫完")
 )
 
 // httpClient 所有网盘 API 调用的公共客户端。

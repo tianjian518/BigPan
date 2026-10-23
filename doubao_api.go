@@ -38,11 +38,21 @@ const (
 	doubaoQs   = "version_code=20800&device_platform=web&aid=497858"
 )
 
+// dbPageSize 每页条数。
+//
+// 默认只给 50 条 —— 一个几千项的目录要翻 20 多次页，请求数白白翻几十倍，
+// 而豆包的风控就是按请求数算的。实测传 size=1000 能一次返回 1000 条，
+// 请求数直接砍掉一个量级，这是减少风控最有效的一招。
+const dbPageSize = 1000
+
 // doubaoGap 全局限速间隔。可被 -doubao-gap 覆盖。
 //
-// 实测：400ms（150 次/分钟）扫到 300 个目录左右就被风控；
-// 风控按「出口 IP 的累计请求量」算，不是按并发，所以放慢是唯一稳的办法。
-var doubaoGap = 1 * time.Second
+// 豆包是「滑动窗口」限流，不是硬性持久封禁：
+//   · 400ms（150 次/分钟）→ 约 300 个目录撞线
+//   · 1 秒（60 次/分钟）  → 家宽出口约 280 个目录撞线，机房出口 380 次还没事
+//   · 2 秒（30 次/分钟）  → 5 分钟只打 150 次，低于窗口阈值，可以连续扫完
+// 家宽 IPv4 是共享出口，阈值比机房低，所以飞牛上要更慢。
+var doubaoGap = 2 * time.Second
 
 // dbNode 是豆包的节点（文件或目录）。node_type：1=目录 2=普通文件 6=视频。
 type dbNode struct {
@@ -473,6 +483,52 @@ func dbSnippet(b []byte) string {
 	return s
 }
 
+// dbUserInfo 取账号昵称与手机号（用于自动命名账号）。
+//
+// 这个接口是 OpenList 豆包驱动在用的，我之前试了 8 个 /samantha/* 路径全 404，
+// 漏了它。返回里有 name / screen_name / mobile（打码）/ avatar_url。
+func (d *Doubao) dbUserInfo() (name, mobile string, err error) {
+	if w := d.blockedFor(); w > 0 {
+		return "", "", &dbThrottleErr{wait: w}
+	}
+	trace := &dbTrace{}
+	ctx := context.WithValue(context.Background(), dbTraceKey{}, trace)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		doubaoBase+"/passport/account/info/v2/", nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", doubaoUA)
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Cookie", d.cookie)
+	dbThrottle()
+	resp, err := d.hc.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(bytes.TrimSpace(raw)) == 0 {
+		return "", "", fmt.Errorf("豆包账号信息不可用（HTTP %d）", resp.StatusCode)
+	}
+	var out struct {
+		Data struct {
+			Name       string `json:"name"`
+			ScreenName string `json:"screen_name"`
+			Mobile     string `json:"mobile"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", "", err
+	}
+	name = out.Data.Name
+	if name == "" {
+		name = out.Data.ScreenName
+	}
+	dbExitOK(trace.ip)
+	return strings.TrimSpace(name), out.Data.Mobile, nil
+}
+
 // ---- 自己的盘 ----
 
 // dbHome 列根目录，返回根节点 ID 与顶层条目。
@@ -504,7 +560,7 @@ func (d *Doubao) dbListDir(nodeID string) ([]dbNode, error) {
 }
 
 func (d *Doubao) dbListDirPage(nodeID, cursor string) ([]dbNode, error) {
-	body := map[string]any{"node_id": nodeID}
+	body := map[string]any{"node_id": nodeID, "size": dbPageSize}
 	if cursor != "" {
 		body["cursor"] = cursor
 	}
@@ -529,7 +585,7 @@ func (d *Doubao) dbListDirAll(nodeID string) ([]dbNode, error) {
 	var all []dbNode
 	cursor := ""
 	for page := 0; page < 200; page++ {
-		body := map[string]any{"node_id": nodeID}
+		body := map[string]any{"node_id": nodeID, "size": dbPageSize}
 		if cursor != "" {
 			body["cursor"] = cursor
 		}
@@ -590,7 +646,7 @@ func (d *Doubao) dbShareListDir(shareID, nodeID string) ([]dbNode, error) {
 	var all []dbNode
 	cursor := ""
 	for page := 0; page < 200; page++ {
-		body := map[string]any{"share_id": shareID, "node_id": nodeID, "need_full_path": false}
+		body := map[string]any{"share_id": shareID, "node_id": nodeID, "need_full_path": false, "size": dbPageSize}
 		if cursor != "" {
 			body["cursor"] = cursor
 		}
