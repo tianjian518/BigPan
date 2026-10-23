@@ -1144,7 +1144,7 @@ function curCat(i1,i2,n1,n2){
   return v1+'/'+v2;
 }
 // ---- 追更刷新 ----
-var SHAREPAGE=1, SHARESIZE=50, SHARETOTAL=0;
+var SHAREPAGE=1, SHARESIZE=20, SHARETOTAL=0;
 function loadShares(page){
   if(page)SHAREPAGE=page;
   $('shareList').innerHTML='<tr><td colspan="5" class="loading"><span class="spin"></span>加载中…</td></tr>';
@@ -1335,6 +1335,7 @@ function doChangeCat(){
 }
 // ---- 媒体库（OpenList 风格：面包屑 + 逐层进入 + 勾选批量 + 整剧删除） ----
 var LIBT=null, CURPATH=[], VIEW='list', SEL=[], LIBQ='';
+var LIBPAGE=1, LIBPSIZE=50; // 搜索结果分页：库里上千条时不能一次全渲染
 function svgFolder(){return '<svg class="fdi f" viewBox="0 0 24 24"><path d="M3 6.6A2.6 2.6 0 0 1 5.6 4h3.1a1 1 0 0 1 .74.33L11 6h7.4A2.6 2.6 0 0 1 21 8.6v8.8a2.6 2.6 0 0 1-2.6 2.6H5.6A2.6 2.6 0 0 1 3 17.4Z"/></svg>'}
 function svgVideo(){return '<svg class="fdi" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7.5 4v16M16.5 4v16M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21"/></svg>'}
 function svgDoc(){return '<svg class="fdi" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>'}
@@ -1389,16 +1390,37 @@ function openLibPlayer(id){ openPlayer(id); }
 function loadLib(){
   syncLibQClr();
   LIBQ=($('libQ')?$('libQ').value.trim().toLowerCase():'');
+  LIBPAGE=1; // 换关键词重新从第一页看
   $('libBox').innerHTML='<div class="loading"><span class="spin"></span>加载中…</div>';
   loadItems(function(){ buildTree(); paintLib(); });
 }
+// 通用分页条（媒体库搜索/长目录复用）；fn 是翻页函数名
+function libPagerHtml(total,page,size,fn){
+  var pages=Math.max(1,Math.ceil(total/size));
+  var h='<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px;flex-wrap:wrap">';
+  h+='<span style="margin-right:auto;color:var(--mut);font-size:12px">共 '+total+' 项 · 第 '+page+' / '+pages+' 页</span>';
+  h+='<button class="pgb gray"'+(page<=1?' disabled':'')+' onclick="'+fn+'('+(page-1)+')">‹</button>';
+  h+='<span style="font-size:12px;color:var(--mut)">'+page+'</span>';
+  h+='<button class="pgb gray"'+(page>=pages?' disabled':'')+' onclick="'+fn+'('+(page+1)+')">›</button>';
+  h+='</div>';
+  return h;
+}
+function goLibPage(p){ LIBPAGE=p; paintLib(); try{window.scrollTo({top:0,behavior:'smooth'})}catch(e){window.scrollTo(0,0)} }
 function paintLib(){
   $('selbar').style.display='none';$('selbar').classList.remove('show');
   if(LIBQ){
     var hit=ITEMS.filter(function(it){return ((it.dir||'')+'/'+(it.title||'')+(it.ext||'')).toLowerCase().indexOf(LIBQ)>=0});
     if(!hit.length){ $('libBox').innerHTML='<div class="empty"><div class="ei">'+svgDoc()+'</div><b>没有匹配「'+esc(LIBQ)+'」的内容</b>换个关键词试试</div>'; $('crumb').innerHTML=''; return; }
-    renderFlat(hit);
+    var _pages=Math.max(1,Math.ceil(hit.length/LIBPSIZE));
+    if(LIBPAGE>_pages)LIBPAGE=1;
+    var _st=(LIBPAGE-1)*LIBPSIZE;
+    renderFlat(hit.slice(_st,_st+LIBPSIZE));
     $('crumb').innerHTML='<a class="cb" onclick="goPath([]);return false">'+ICO.home+' 根目录</a><span class="csep">/</span><span class="cb cur">搜索：'+esc(LIBQ)+'（'+hit.length+'）</span>';
+    if(hit.length>LIBPSIZE){
+      var _pg=document.createElement('div');
+      _pg.innerHTML=libPagerHtml(hit.length,LIBPAGE,LIBPSIZE,'goLibPage');
+      $('libBox').appendChild(_pg);
+    }
     return;
   }
   renderLib();
