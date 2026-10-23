@@ -35,8 +35,9 @@ const (
 	doubaoUA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 	doubaoQs   = "version_code=20800&device_platform=web&aid=497858"
 
-	// doubaoGap 全局限速间隔。官方 OpenList 驱动用每秒 2 次，实测一致。
-	doubaoGap = 500 * time.Millisecond
+	// doubaoGap 全局限速间隔。实测 0.35s 间隔连打 8 次全过，取 350ms；
+	// 真触发 429 还有退避重试兜底。大库扫描（几千文件）靠它压时间。
+	doubaoGap = 350 * time.Millisecond
 )
 
 // dbNode 是豆包的节点（文件或目录）。node_type：1=目录 2=普通文件 6=视频。
@@ -207,19 +208,65 @@ func (d *Doubao) dbHome() (rootID string, children []dbNode, err error) {
 	return out.RootID, out.Children, nil
 }
 
-// dbListDir 列自己盘某个目录。
+// dbPage 是目录接口的一页。
+type dbPage struct {
+	Children   []dbNode `json:"children"`
+	NextCursor string   `json:"next_cursor"`
+	HasMore    bool     `json:"has_more"`
+}
+
+// dbListDir 列自己盘某个目录（单页）。
 func (d *Doubao) dbListDir(nodeID string) ([]dbNode, error) {
-	data, err := d.post("/samantha/aispace/node_info", map[string]any{"node_id": nodeID})
+	return d.dbListDirPage(nodeID, "")
+}
+
+func (d *Doubao) dbListDirPage(nodeID, cursor string) ([]dbNode, error) {
+	body := map[string]any{"node_id": nodeID}
+	if cursor != "" {
+		body["cursor"] = cursor
+	}
+	data, err := d.post("/samantha/aispace/node_info", body)
 	if err != nil {
 		return nil, err
 	}
-	var out struct {
-		Children []dbNode `json:"children"`
-	}
+	var out dbPage
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("豆包目录结构异常：%s", dbSnippet(data))
 	}
 	return out.Children, nil
+}
+
+// dbListDirAll 列完整个目录（自动翻页）。
+// 豆包单个目录超过一页时会给 has_more + next_cursor，不翻页就会漏文件。
+func (d *Doubao) dbListDirAll(nodeID string) ([]dbNode, error) {
+	var all []dbNode
+	cursor := ""
+	for page := 0; page < 200; page++ {
+		body := map[string]any{"node_id": nodeID}
+		if cursor != "" {
+			body["cursor"] = cursor
+		}
+		data, err := d.post("/samantha/aispace/node_info", body)
+		if err != nil {
+			if page == 0 {
+				return nil, err
+			}
+			break // 翻页中途失败就用手上这批，不要整单失败
+		}
+		var out dbPage
+		if err := json.Unmarshal(data, &out); err != nil {
+			if page == 0 {
+				return nil, fmt.Errorf("豆包目录结构异常：%s", dbSnippet(data))
+			}
+			break
+		}
+		all = append(all, out.Children...)
+		if !out.HasMore || out.NextCursor == "" || out.NextCursor == "-1" {
+			break
+		}
+		cursor = out.NextCursor
+	}
+	return all, nil
 }
 
 // ---- 别人的分享 ----
@@ -257,21 +304,36 @@ func (d *Doubao) dbShareOverview(shareID string) (title string, nodes []dbNode, 
 	return title, out.NodeList, nil
 }
 
-// dbShareListDir 列分享内某个目录。
+// dbShareListDir 列分享内某个目录（自动翻页）。
 func (d *Doubao) dbShareListDir(shareID, nodeID string) ([]dbNode, error) {
-	data, err := d.post("/samantha/aispace/share/node_info", map[string]any{
-		"share_id": shareID, "node_id": nodeID, "need_full_path": false,
-	})
-	if err != nil {
-		return nil, err
+	var all []dbNode
+	cursor := ""
+	for page := 0; page < 200; page++ {
+		body := map[string]any{"share_id": shareID, "node_id": nodeID, "need_full_path": false}
+		if cursor != "" {
+			body["cursor"] = cursor
+		}
+		data, err := d.post("/samantha/aispace/share/node_info", body)
+		if err != nil {
+			if page == 0 {
+				return nil, err
+			}
+			break
+		}
+		var out dbPage
+		if err := json.Unmarshal(data, &out); err != nil {
+			if page == 0 {
+				return nil, fmt.Errorf("豆包分享目录结构异常：%s", dbSnippet(data))
+			}
+			break
+		}
+		all = append(all, out.Children...)
+		if !out.HasMore || out.NextCursor == "" || out.NextCursor == "-1" {
+			break
+		}
+		cursor = out.NextCursor
 	}
-	var out struct {
-		Children []dbNode `json:"children"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("豆包分享目录结构异常：%s", dbSnippet(data))
-	}
-	return out.Children, nil
+	return all, nil
 }
 
 // ---- 取播放地址 ----

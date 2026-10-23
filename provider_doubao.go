@@ -21,11 +21,13 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // doubaoSlots 预留的账号槽位数。加账号就改这个数（UI 会同步多一张卡片）。
@@ -188,7 +190,11 @@ func resetDoubaoClients() {
 
 // scanDoubaoOwn 从自己盘的某个目录起，递归收集视频文件。
 // ShareFile.ID 存 node_id，FidToken 存 key，Code 留空（不是分享）。
+//
+// 上限只做「防跑飞」保护（2 万文件 / 5 千目录），不是业务限制：
+// 之前写的 800 文件 / 300 目录会静默漏文件，用户的库有几千个视频。
 func scanDoubaoOwn(cli *Doubao, nodeID string) (string, []ShareFile, error) {
+	const maxFiles, maxDirs = 20000, 5000
 	type job struct {
 		id, prefix string
 	}
@@ -197,10 +203,11 @@ func scanDoubaoOwn(cli *Doubao, nodeID string) (string, []ShareFile, error) {
 	title := "豆包文件"
 	var files []ShareFile
 	first := true
-	for len(queue) > 0 && len(files) < 800 {
+	start := time.Now()
+	for len(queue) > 0 && len(files) < maxFiles && len(seen) < maxDirs {
 		j := queue[0]
 		queue = queue[1:]
-		list, err := cli.dbListDir(j.id)
+		list, err := cli.dbListDirAll(j.id)
 		if err != nil {
 			if first {
 				return "", nil, fmt.Errorf("读取豆包目录失败：%w", err)
@@ -218,7 +225,7 @@ func scanDoubaoOwn(cli *Doubao, nodeID string) (string, []ShareFile, error) {
 				p = j.prefix + "/" + n.Name
 			}
 			if n.IsDir() {
-				if !seen[n.ID] && len(seen) < 300 {
+				if !seen[n.ID] {
 					seen[n.ID] = true
 					queue = append(queue, job{id: n.ID, prefix: p})
 				}
@@ -230,7 +237,11 @@ func scanDoubaoOwn(cli *Doubao, nodeID string) (string, []ShareFile, error) {
 				})
 			}
 		}
+		if len(files) > 0 && len(files)/200 > (len(files)-len(list))/200 {
+			log.Printf("[豆包] 扫描中：%d 个目录 / %d 个视频 / 已用 %v", len(seen), len(files), time.Since(start).Round(time.Second))
+		}
 	}
+	log.Printf("[豆包] 扫描完成：%d 个目录 / %d 个视频 / 耗时 %v", len(seen), len(files), time.Since(start).Round(time.Second))
 	if len(files) == 0 {
 		return "", nil, fmt.Errorf("这个目录里没有视频文件")
 	}
@@ -264,7 +275,7 @@ func scanDoubaoShare(cli *Doubao, shareID string) (string, []ShareFile, error) {
 			})
 		}
 	}
-	for len(queue) > 0 && len(files) < 800 {
+	for len(queue) > 0 && len(files) < 20000 && len(seen) < 5000 {
 		j := queue[0]
 		queue = queue[1:]
 		list, err := cli.dbShareListDir(shareID, j.id)
@@ -274,7 +285,7 @@ func scanDoubaoShare(cli *Doubao, shareID string) (string, []ShareFile, error) {
 		for _, n := range list {
 			p := j.prefix + "/" + n.Name
 			if n.IsDir() {
-				if !seen[n.ID] && len(seen) < 300 {
+				if !seen[n.ID] {
 					seen[n.ID] = true
 					queue = append(queue, job{id: n.ID, prefix: p})
 				}

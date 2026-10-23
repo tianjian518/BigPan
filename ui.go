@@ -387,6 +387,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <div class="grp">资源</div>
       <a data-p="import"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4.5-4.5M12 15 7.5 10.5"/><path d="M4 16.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5"/></svg><span>分享导入</span></a>
       <a data-p="tianyi-sub"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H12l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5Z"/><path d="M8.5 8.5h7M8.5 11.5h4.5"/></svg><span>天翼订阅</span></a>
+      <a data-p="doubao"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5c4.7 0 8.5 3.4 8.5 7.6 0 4.2-3.8 7.6-8.5 7.6-1 0-2-.14-2.9-.4L5 20.5l1.1-3.6C4.4 15.4 3.5 13.4 3.5 11.1 3.5 6.9 7.3 3.5 12 3.5Z"/><circle cx="9" cy="10.5" r="1"/><circle cx="15" cy="10.5" r="1"/></svg><span>豆包盘</span></a>
       <a data-p="lib"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7.5 4v16M16.5 4v16M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21"/></svg><span>媒体库</span></a>
       <div class="grp">系统</div>
       <a data-p="set"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h9M17.5 7.5H20M4 16.5h3M11.5 16.5H20"/><circle cx="15" cy="7.5" r="2.4"/><circle cx="9" cy="16.5" r="2.4"/></svg><span>设置</span></a>
@@ -432,25 +433,9 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <textarea id="batchText" placeholder="https://cloud.189.cn/t/xxxx（访问码：abcd）&#10;https://pan.quark.cn/s/xxxx&#10;https://pan.baidu.com/s/xxxx?pwd=abcd" style="width:100%;height:104px;margin-top:10px;box-sizing:border-box;font-size:13px;line-height:1.6;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--fg)"></textarea>
         <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
           <button onclick="batchParse()">解析</button>
-          <button class="gray" onclick="openDbBrowse()">浏览豆包盘</button>
+          <button class="gray" onclick="nav('doubao')">浏览豆包盘</button>
           <input type="text" id="sharePwd" placeholder="提取码(选填)" style="width:140px">
           <span class="sub">支持 夸克 / 百度 / 115 / 移动 / 天翼。访问码直接跟在链接后面（如「（访问码：xx11）」）；只粘一条时也可以填在左边框里。</span>
-        </div>
-        <div id="dbBrowse" style="display:none;margin-top:12px">
-          <div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg2)">
-            <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-              <b style="font-size:13px">浏览豆包盘</b>
-              <select id="dbSlot" onchange="dbGo('')" style="width:110px">
-                <option value="doubao1">豆包1</option><option value="doubao2">豆包2</option>
-                <option value="doubao3">豆包3</option><option value="doubao4">豆包4</option>
-              </select>
-              <span id="dbCrumb" class="sub" style="flex:1">根目录</span>
-              <button class="mini gray" onclick="dbGo('')">回根目录</button>
-              <button class="mini gray" onclick="dbClose()">关闭</button>
-            </div>
-            <div id="dbList" style="margin-top:8px"></div>
-            <div class="sub" style="margin-top:8px">点「导入此目录」会自动解析并把里面的视频全部列出来，确认后再入库。自己的盘不需要分享、不会被删。</div>
-          </div>
         </div>
         <div id="batchOut" style="margin-top:12px"></div>
       </div>
@@ -485,7 +470,24 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <div id="tsShares" style="margin-top:16px"></div>
       </div>
     </div>
-    <div id="pg-lib" style="display:none">
+          <div id="pg-doubao" style="display:none">
+      <div class="pagehd"><h2>豆包盘</h2><span class="sub">一个账号一格 · 直接读自己的盘 · 302 直链</span></div>
+      <div class="card">
+        <div class="chd"><b>账号</b><span class="csub">每个豆包号单独连，文件、条目、播放全互不干扰</span></div>
+        <div id="dbAccts" style="margin-top:6px"><div class="loading"><span class="spin"></span>读取中…</div></div>
+        <div class="sub" style="margin-top:10px">Cookie 只认 <b>sessionid</b>，约 30 天有效，过期重粘一次。连上后点「浏览」进自己的网盘挑目录，<b>不需要分享链接、不会被删</b>。</div>
+      </div>
+      <div class="card" id="dbPane" style="display:none">
+        <div class="chd"><b id="dbPaneName">浏览</b><span class="csub" id="dbCrumb">根目录</span></div>
+        <div class="row" style="margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="mini gray" onclick="dbGo('')">回根目录</button>
+          <button class="mini gray" onclick="dbClosePane()">收起</button>
+        </div>
+        <div id="dbList" style="margin-top:10px"></div>
+        <div class="sub" style="margin-top:8px">点「导入此目录」会跳到导入页解析，列出里面全部视频，确认后再入库。</div>
+      </div>
+    </div>
+<div id="pg-lib" style="display:none">
       <div class="pagehd">
         <h2>媒体库</h2>
         <span style="flex:1"></span>
@@ -654,7 +656,7 @@ function cleanShow(s){
 }
 function toast(m){var t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('show')},2200)}
 function humanSize(n){if(!n||n<=0)return '0 B';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?2:0)+' '+u[i]}
-var PAGES=['home','import','tianyi-sub','lib','set'];
+var PAGES=['home','import','tianyi-sub','doubao','lib','set'];
 function nav(p){
   PAGES.forEach(function(x){
     var el=$('pg-'+x);
@@ -665,6 +667,7 @@ function nav(p){
   for(var i=0;i<as.length;i++){as[i].className=(as[i].getAttribute('data-p')===p?'on':'')}
   if(p==='home')loadHome(); if(p==='lib')loadLib(); if(p==='set')loadSet(); if(p==='import')loadShares();
   if(p==='tianyi-sub'){loadTianyiSubs();tsBfPoll(false);}
+  if(p==='doubao')paintDoubao();
 }
 (function(){var as=document.querySelectorAll('.nav a');for(var i=0;i<as.length;i++){as[i].onclick=function(){nav(this.getAttribute('data-p'))}}})();
 (function(){var el=$('sharePwd');if(el)el.addEventListener('keydown',function(e){if(e.key==='Enter')batchParse()})})();
@@ -835,15 +838,45 @@ function batchSplit(text){
   return out;
 }
 
-// ---- 浏览自己的豆包盘（伪链接 doubao://<槽位>/<node_id>）----
-var DB_STACK=[];
-function openDbBrowse(){ $('dbBrowse').style.display=''; DB_STACK=[]; dbGo(''); }
-function dbClose(){ $('dbBrowse').style.display='none'; }
+// ---- 豆包盘：账号列表 + 浏览（伪链接 doubao://<槽位>/<node_id>）----
+var DB_STACK=[], DB_SLOT='doubao1';
+function paintDoubao(){
+  fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
+    var map={};
+    (d.accounts||[]).forEach(function(a){map[a.provider]=a});
+    var t='';
+    for(var i=1;i<=4;i++){
+      var pv='doubao'+i, a=map[pv];
+      t+='<div style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line);flex-wrap:wrap">';
+      t+='<b style="min-width:64px">豆包'+i+'</b>';
+      if(a){
+        t+='<span class="tag d">已连接</span><span class="sub">'+esc(a.label||'')+'</span>';
+      }else{
+        t+='<span class="tag off">未连接</span>';
+      }
+      t+='<span style="flex:1"></span>';
+      if(a){
+        t+='<button class="mini" onclick="dbOpenFor(\''+pv+'\')">浏览</button>';
+        t+='<button class="mini gray" onclick="delAcc(\''+pv+'\')">换号</button>';
+      }else{
+        t+='<button class="mini" onclick="openConn(\''+pv+'\')">连接</button>';
+      }
+      t+='</div>';
+    }
+    $('dbAccts').innerHTML=t;
+  }).catch(function(){ $('dbAccts').innerHTML='<div class="sub">读取失败，刷新页面试试</div>' });
+}
+function dbOpenFor(pv){
+  DB_SLOT=pv; DB_STACK=[];
+  $('dbPane').style.display='';
+  $('dbPaneName').textContent=PVCN[pv]||pv;
+  dbGo('');
+}
+function dbClosePane(){ $('dbPane').style.display='none'; }
 function dbGo(nodeId){
-  var slot=$('dbSlot').value||'doubao1';
   if(!nodeId)DB_STACK=[];
   $('dbList').innerHTML='<div class="loading"><span class="spin"></span>读取中…</div>';
-  fetch('/api/doubao/browse?provider='+encodeURIComponent(slot)+'&node_id='+encodeURIComponent(nodeId||''))
+  fetch('/api/doubao/browse?provider='+encodeURIComponent(DB_SLOT)+'&node_id='+encodeURIComponent(nodeId||''))
    .then(function(r){return r.json()}).then(function(d){
      if(!d.ok){ $('dbList').innerHTML='<div class="sub">'+esc(d.error||'读取失败')+'</div>'; return; }
      var path=DB_STACK.map(function(x){return x.name}).join(' / ')||'根目录';
@@ -860,10 +893,15 @@ function dbGo(nodeId){
        t+='</div>';
      });
      $('dbList').innerHTML=t||'<div class="sub">（这个目录是空的）</div>';
-   }).catch(function(){ $('dbList').innerHTML='<div class="sub">读取失败，检查 Cookie 是否过期</div>'; });
+   }).catch(function(){ $('dbList').innerHTML='<div class="sub">读取失败，检查 Cookie 是否过期</div>' });
 }
 function dbEnter(id,name){ DB_STACK.push({id:id,name:name}); dbGo(id); }
-function dbPick(link){ $('batchText').value=link; dbClose(); batchParse(); }
+function dbPick(link){
+  $('batchText').value=link;
+  nav('import');
+  toast('正在解析，大目录要几分钟，别关页面');
+  batchParse();
+}
 function batchParse(){
   var links=batchSplit($('batchText').value);
   if(!links.length){toast('没识别到链接，一行一条，以 http 开头');return}
