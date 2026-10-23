@@ -722,6 +722,27 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 			return
 		}
 
+		// UC 同属 302 铁律：转存 + TV 转码流直链，客户端直连 CDN，数据绝不经过本机。
+		// 2026-10-23 补记：此前 /play 只给了天翼和夸克，UC 落到了下面的本机中转，
+		// 违反项目铁律（用户当场指出）。任何新接入的网盘，只要支持 302 就必须在这里
+		// 写分支，不要依赖「落到后面也能播」——中转等于拿家宽上行当出口。
+		if it != nil && strings.EqualFold(it.Provider, "uc") {
+			u, uerr := resolveDirectURL(it)
+			if uerr != nil || u == "" {
+				msg := "未返回直链"
+				if uerr != nil {
+					msg = uerr.Error()
+				}
+				log.Printf("  [直链] %s（UC）解析失败: %s", it.FileName(), msg)
+				http.Error(w, "取直链失败: "+msg, http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Cache-Control", "private, max-age=300")
+			log.Printf("  [直链] %s（UC）→ 302 直连 CDN（数据不过本机）", it.FileName())
+			http.Redirect(w, r, u, http.StatusFound)
+			return
+		}
+
 		conc := *flagConc
 		if v := q.Get("conc"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 256 {
