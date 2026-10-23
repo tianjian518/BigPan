@@ -36,11 +36,13 @@ const (
 	doubaoBase = "https://www.doubao.com"
 	doubaoUA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 	doubaoQs   = "version_code=20800&device_platform=web&aid=497858"
-
-	// doubaoGap 全局限速间隔。实测 0.35s 连打 8 次能过，但连续浏览目录时
-	// 贴边会撞上限流（返回空体），取 400ms 留点余量；429/空体都有退避重试。
-	doubaoGap = 400 * time.Millisecond
 )
+
+// doubaoGap 全局限速间隔。可被 -doubao-gap 覆盖。
+//
+// 实测：400ms（150 次/分钟）扫到 300 个目录左右就被风控；
+// 风控按「出口 IP 的累计请求量」算，不是按并发，所以放慢是唯一稳的办法。
+var doubaoGap = 1 * time.Second
 
 // dbNode 是豆包的节点（文件或目录）。node_type：1=目录 2=普通文件 6=视频。
 type dbNode struct {

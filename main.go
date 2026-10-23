@@ -25,10 +25,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"os/signal"
 	"sync"
 	"syscall"
 	"time"
@@ -53,6 +53,7 @@ var (
 	flagRefresh = flag.Int("refresh", 60, "追更自动刷新间隔（分钟）：到点自动重扫所有追更中的分享，0=关闭")
 	flagSTRM    = flag.String("strm", "/data/strm", "STRM 导出目录（生成给飞牛影视等媒体库的 .strm 目录树）")
 	flagHealth  = flag.Int("health", 30, "分享失效巡检间隔（分钟）：全量探测所有已导入分享，失效则删除条目与 STRM，0=关闭")
+	flagDbGap   = flag.Int("doubao-gap", 1000, "豆包请求间隔（毫秒）：调大更不容易被风控但扫描更慢；实测 400 会在 300 个目录左右被打断")
 )
 
 // httpClient 所有网盘 API 调用的公共客户端。
@@ -1528,6 +1529,9 @@ func main() {
 
 	flag.Parse()
 	log.SetFlags(log.Ltime)
+	if *flagDbGap > 0 {
+		doubaoGap = time.Duration(*flagDbGap) * time.Millisecond
+	}
 	if *flagPass == "admin" {
 		log.Printf("[安全] 管理界面默认账号 %s / 密码 admin —— 首次登录后请务必用 -pass 改成强密码", *flagUser)
 	}

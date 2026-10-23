@@ -666,21 +666,34 @@ function nav(p){
   });
   var as=document.querySelectorAll('.nav a');
   for(var i=0;i<as.length;i++){as[i].className=(as[i].getAttribute('data-p')===p?'on':'')}
-  if(p==='home')loadHome(); if(p==='lib')loadLib(); if(p==='set')loadSet(); if(p==='import')loadShares();
+  // 媒体库/首页的「网盘」标签要用账号别名，必须等名字取回来再渲染，
+  // 否则会先画出「豆包1/豆包2」，等命名回来也不会自动改。
+  if(p==='home')loadAccNames(loadHome);
+  if(p==='lib')loadAccNames(loadLib);
+  if(p==='set')loadSet(); if(p==='import')loadShares();
   if(p==='tianyi-sub'){loadTianyiSubs();tsBfPoll(false);}
   if(p==='doubao')paintDoubao();
 }
 (function(){var as=document.querySelectorAll('.nav a');for(var i=0;i<as.length;i++){as[i].onclick=function(){nav(this.getAttribute('data-p'))}}})();
 
 // 豆包账号别名：全局生效 —— 媒体库标签、浏览面板标题、导入预览的「网盘」列都跟着变。
-function loadAccNames(){
+var ACC_LOADED=false;
+// cb 只在「名字已就绪」时调用一次，供媒体库/首页渲染用。
+function loadAccNames(cb){
+  if(ACC_LOADED){ if(cb)setTimeout(cb,0); return; }
   fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
     (d.accounts||[]).forEach(function(a){
       if((a.provider||'').indexOf('doubao')!==0)return;
-      DB_NAMES[a.provider]=a.alias||('豆包'+a.provider.slice(6));
-      if(a.alias){PVCN[a.provider]=a.alias;PVSHORT[a.provider]=a.alias;}
+      var slot='豆包'+a.provider.slice(6);
+      // 没起别名时也要带短码：否则 4 个号在媒体库里全叫「豆包1/2/3/4」，分不清
+      var lbl=a.alias?a.alias:(a.tag?slot+' · '+a.tag:slot);
+      DB_NAMES[a.provider]=a.alias||slot;
+      PVCN[a.provider]=lbl;
+      PVSHORT[a.provider]=lbl;
     });
-  }).catch(function(){});
+    ACC_LOADED=true;
+    if(cb)cb();
+  }).catch(function(){ ACC_LOADED=true; if(cb)cb(); });
 }
 loadAccNames();
 (function(){var el=$('sharePwd');if(el)el.addEventListener('keydown',function(e){if(e.key==='Enter')batchParse()})})();
@@ -864,7 +877,7 @@ function dbRename(pv,cur){
     fetch('/api/accounts/label',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({provider:pv,label:v.trim()})})
      .then(function(r){return r.json()}).then(function(d){
-       if(d.ok){toast('已改名');loadAccNames();paintDoubao();}else toast(d.error||'改名失败');
+       if(d.ok){toast('已改名');ACC_LOADED=false;loadAccNames(paintDoubao);}else toast(d.error||'改名失败');
      }).catch(function(){toast('改名失败，网络异常')});
   },true,cur||'');
 }
