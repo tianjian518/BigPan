@@ -433,7 +433,6 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <textarea id="batchText" placeholder="https://cloud.189.cn/t/xxxx（访问码：abcd）&#10;https://pan.quark.cn/s/xxxx&#10;https://pan.baidu.com/s/xxxx?pwd=abcd" style="width:100%;height:104px;margin-top:10px;box-sizing:border-box;font-size:13px;line-height:1.6;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--fg)"></textarea>
         <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
           <button onclick="batchParse()">解析</button>
-          <button class="gray" onclick="nav('doubao')">浏览豆包盘</button>
           <input type="text" id="sharePwd" placeholder="提取码(选填)" style="width:140px">
           <span class="sub">支持 夸克 / 百度 / 115 / 移动 / 天翼。访问码直接跟在链接后面（如「（访问码：xx11）」）；只粘一条时也可以填在左边框里。</span>
         </div>
@@ -636,6 +635,13 @@ function pvLabel(name){
   if(name.indexOf('移动')>=0)return '移动';
   if(name.indexOf('天翼')>=0)return '天翼';
   if(name.indexOf('百度')>=0)return '百度';
+  return name;
+}
+// 媒体库的 dir 第一段存的是网盘中文名（豆包1/豆包2…），那是入库时固化的。
+// 显示时把它换成账号别名，否则改了名媒体库还是「豆包1」。
+function dirLabel(name){
+  var m=/^豆包(\d+)$/.exec(String(name||''));
+  if(m){ var pv='doubao'+m[1]; return PVCN[pv]||name; }
   return name;
 }
 var PVCLS={quark:'q','115':'n',mobile139:'m',tianyi:'t',baidu:'b',uc:'u'};
@@ -1596,7 +1602,7 @@ function renderLib(){
   if(!node){CURPATH=[];node=TREE;}
   var cr='<a class="cb" onclick="goPath([]);return false">'+ICO.home+' 根目录</a>';
   var acc=[];
-  for(var i=0;i<CURPATH.length;i++){ acc.push(CURPATH[i]); cr+='<span class="csep">/</span><a class="cb '+(i===CURPATH.length-1?'cur':'')+'" onclick="goPath('+escA(JSON.stringify(acc))+');return false">'+esc(cleanShow(CURPATH[i]))+'</a>'; }
+  for(var i=0;i<CURPATH.length;i++){ acc.push(CURPATH[i]); cr+='<span class="csep">/</span><a class="cb '+(i===CURPATH.length-1?'cur':'')+'" onclick="goPath('+escA(JSON.stringify(acc))+');return false">'+esc(cleanShow(dirLabel(CURPATH[i])))+'</a>'; }
   $('crumb').innerHTML=cr;
   var dirs=[], files=node.__files||[];
   for(var k in node){ if(k!=='__files') dirs.push(k); }
@@ -1615,13 +1621,17 @@ function renderLib(){
   dirs.forEach(function(name){
     var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
     var si=dirShare(dn); // 单分享目录（剧名层）才给「分类」
+    // 只有「这一层就是剧名」才给分类入口。豆包2 整盘只导入了一部剧时，
+    // 网盘层也会满足「全属一个分享」，于是「豆包2」旁边冒出个「分类」——
+    // 网盘/分类层不该有分类按钮。
+    if(si && cleanShow(si.show)!==cleanShow(name)) si=null;
     var ops=si
       ? '<button class="mini" data-act="cat">分类</button><button class="mini danger" data-act="del">删除</button>'
       : '<button class="mini danger" data-act="del">删除</button>';
     h+='<tr class="librow dirrow" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'"'+
       ' data-cat-p="'+escA(si?si.provider:'')+'" data-cat-id="'+escA(si?si.share_id:'')+'" data-cat-show="'+escA(si?cleanShow(si.show):'')+'" data-cat-cur="'+escA(si?si.category:'')+'">'+
       '<td class="ckc"><input type="checkbox" class="ckL" onchange="updLibSel()"></td>'+
-      '<td><span class="fv" data-act="open">'+svgFolder()+'<span class="nm"><b>'+esc(cleanShow(name))+'</b><span class="dircnt">'+cnt+' 项</span></span></span></td>'+
+      '<td><span class="fv" data-act="open">'+svgFolder()+'<span class="nm"><b>'+esc(cleanShow(dirLabel(name)))+'</b><span class="dircnt">'+cnt+' 项</span></span></span></td>'+
       '<td class="libsz">—</td>'+
       '<td class="libtm">—</td>'+
       '<td class="ops"><span class="acts">'+ops+'</span></td>'+
@@ -1665,7 +1675,7 @@ function renderGrid(node,dirs,files){
   var h='<div class="gridview">';
   dirs.forEach(function(name){
     var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
-    h+='<div class="gcard" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'">'+svgFolder()+'<div class="gn">'+esc(cleanShow(name))+'</div><div class="gs">'+cnt+' 项</div></div>';
+    h+='<div class="gcard" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'">'+svgFolder()+'<div class="gn">'+esc(cleanShow(dirLabel(name)))+'</div><div class="gs">'+cnt+' 项</div></div>';
   });
   files.forEach(function(it){
     var vi=VIDEO_EXTS.test(it.ext||'');
@@ -1915,13 +1925,11 @@ function saveStrm(){
   }).catch(function(){toast('保存失败')});
 }
 // ---- 网盘连接中心：全部网盘列表 + 引导式连接弹窗 ----
+// 设置页只列「一个网盘一个账号」的那些。豆包是好几个独立账号，
+// 全部在左侧「豆包盘」页里管，这里不再重复出现。
 var PV_LIST=[
   {pv:'quark',name:'夸克网盘'},
   {pv:'uc',name:'UC网盘'},
-  {pv:'doubao1',name:'豆包①'},
-  {pv:'doubao2',name:'豆包②'},
-  {pv:'doubao3',name:'豆包③'},
-  {pv:'doubao4',name:'豆包④'},
   {pv:'115',name:'115网盘'},
   {pv:'baidu',name:'百度网盘'},
   {pv:'tianyi',name:'天翼云盘'},
@@ -1970,7 +1978,7 @@ var PV_CONN={
   PV_CONN[pv]={name:nm,methods:['cookie'],importApi:'/api/accounts/import',
     cookiePh:'豆包 Cookie 整串（只留 sessionid 也能用）',
     steps:['电脑浏览器打开 <code>www.doubao.com</code>，登录<b>这个账号</b>','按 <b>F12</b> → 「网络 / Network」','随便点一个请求 → 请求头里找 <b>Cookie</b> → 整串复制','粘到下面框里，点「导入连接」'],
-    note:'豆包一个账号就是一张卡：有几个号就连几张，各管各的文件。<b>Cookie 约 30 天有效</b>，过期重粘一次。连上之后可以在「导入」页点「<b>浏览豆包盘</b>」，直接挑自己网盘里的目录导入 —— 不需要分享、不怕分享失效。'};
+    note:'豆包一个账号就是一张卡：有几个号就连几张，各管各的文件。<b>Cookie 约 30 天有效</b>，过期重粘一次。连上之后点这张卡上的「<b>浏览</b>」，直接挑自己网盘里的目录导入 —— 不需要分享、不怕分享失效。'};
 });
 
 // 渲染全部网盘列表：连了的亮状态+退出按钮，没连的出「连接」按钮
