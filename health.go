@@ -133,12 +133,24 @@ func healthTargets(store *Store) []ShareMeta {
 		return nil
 	}
 	metas := globalShares.List()
+	// 豆包自己盘的条目（node:xxx）**不进巡检**：探活要扫目录，
+	// 几千个条目轮着扫必然触发风控，而且播放本身不依赖分享是否还在。
+	{
+		keep := metas[:0]
+		for _, m := range metas {
+			if doubaoIsNodeID(m.ShareID) {
+				continue
+			}
+			keep = append(keep, m)
+		}
+		metas = keep
+	}
 	seen := make(map[string]bool, len(metas))
 	for _, m := range metas {
 		seen[shareKey(m.Provider, m.ShareID)] = true
 	}
 	for _, it := range store.List() {
-		if it.Provider == "" || it.ShareID == "" {
+		if it.Provider == "" || it.ShareID == "" || doubaoIsNodeID(it.ShareID) {
 			continue
 		}
 		if it.SubUserID != "" {

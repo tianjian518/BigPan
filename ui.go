@@ -671,6 +671,18 @@ function nav(p){
   if(p==='doubao')paintDoubao();
 }
 (function(){var as=document.querySelectorAll('.nav a');for(var i=0;i<as.length;i++){as[i].onclick=function(){nav(this.getAttribute('data-p'))}}})();
+
+// 豆包账号别名：全局生效 —— 媒体库标签、浏览面板标题、导入预览的「网盘」列都跟着变。
+function loadAccNames(){
+  fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
+    (d.accounts||[]).forEach(function(a){
+      if((a.provider||'').indexOf('doubao')!==0)return;
+      DB_NAMES[a.provider]=a.alias||('豆包'+a.provider.slice(6));
+      if(a.alias){PVCN[a.provider]=a.alias;PVSHORT[a.provider]=a.alias;}
+    });
+  }).catch(function(){});
+}
+loadAccNames();
 (function(){var el=$('sharePwd');if(el)el.addEventListener('keydown',function(e){if(e.key==='Enter')batchParse()})})();
 
 // ---- 自定义确认弹窗（替代原生 confirm） ----
@@ -691,11 +703,13 @@ document.addEventListener('keydown',function(e){
 });
 // 输入型模态框：替代原生 prompt，和整体设计语言一致（Enter 确认 / Esc 取消 / 空值禁确认）
 var ASKOK=null;
-function askText(title,placeholder,cb){
+var ASKALLOWEMPTY=false;
+function askText(title,placeholder,cb,allowEmpty,initVal){
   $('askTitle').innerHTML='<span class="mi ok"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h4.2a2 2 0 0 1 1.5.7l1.3 1.5H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6m-3-3h6"/></svg></span>'+esc(title);
   var inp=$('askInput');
-  inp.value='';inp.placeholder=placeholder||'';
-  $('askYes').disabled=true;
+  ASKALLOWEMPTY=!!allowEmpty;
+  inp.value=initVal||'';inp.placeholder=placeholder||'';
+  $('askYes').disabled=!(ASKALLOWEMPTY||inp.value.trim());
   ASKOK=cb;
   var m=$('askModal');m.style.display='flex';requestAnimationFrame(function(){m.classList.add('show')});
   setTimeout(function(){inp.focus()},90);
@@ -707,9 +721,9 @@ function closeAsk(ok){
   setTimeout(function(){m.style.display='none'},200);
   if(f)f(ok?$('askInput').value.trim():null);
 }
-$('askInput').oninput=function(){$('askYes').disabled=!this.value.trim()};
+$('askInput').oninput=function(){$('askYes').disabled=!this.value.trim()&&!ASKALLOWEMPTY};
 $('askInput').onkeydown=function(e){
-  if(e.key==='Enter'){e.preventDefault();if(this.value.trim())closeAsk(true)}
+  if(e.key==='Enter'){e.preventDefault();if(this.value.trim()||ASKALLOWEMPTY)closeAsk(true)}
 };
 
 // ---- 数据 ----
@@ -840,7 +854,20 @@ function batchSplit(text){
 }
 
 // ---- 豆包盘：账号列表 + 浏览（伪链接 doubao://<槽位>/<node_id>）----
-var DB_STACK=[], DB_SLOT='doubao1';
+var DB_STACK=[], DB_SLOT='doubao1', DB_NAMES={};
+
+// 给豆包账号起别名。豆包官方没有任何用户信息接口，自动标识只有 uid 短码，
+// 4 个号光看「豆包1/2/3/4」分不清，所以允许自己命名（留空恢复自动）。
+function dbRename(pv,cur){
+  askText('给「'+pv+'」起个别名','比如 主号 / 小号；清空则恢复自动识别',function(v){
+    if(v===null)return;
+    fetch('/api/accounts/label',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({provider:pv,label:v.trim()})})
+     .then(function(r){return r.json()}).then(function(d){
+       if(d.ok){toast('已改名');loadAccNames();paintDoubao();}else toast(d.error||'改名失败');
+     }).catch(function(){toast('改名失败，网络异常')});
+  },true,cur||'');
+}
 function paintDoubao(){
   fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
     var map={};
@@ -848,16 +875,22 @@ function paintDoubao(){
     var t='';
     for(var i=1;i<=4;i++){
       var pv='doubao'+i, a=map[pv];
+      var auto=a&&(a.alias||a.tag||a.label||'');
+      DB_NAMES[pv]=a&&a.alias?a.alias:('豆包'+i);
       t+='<div style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line);flex-wrap:wrap">';
-      t+='<b style="min-width:64px">豆包'+i+'</b>';
+      t+='<b style="min-width:64px">'+esc(DB_NAMES[pv])+'</b>';
       if(a){
-        t+='<span class="tag d">已连接</span><span class="sub">'+esc(a.label||'')+'</span>';
+        // 起过别名就把「豆包N · 短码」放小字里，没起名就直接显示短码
+        t+='<span class="tag d">已连接</span>';
+        t+='<span class="sub" title="短码来自 Cookie 里的 uid_tt，用来区分不同豆包账号">'+
+           esc(a.alias?('豆包'+i+(a.tag?' · '+a.tag:'')):(a.tag||a.label||''))+'</span>';
       }else{
         t+='<span class="tag off">未连接</span>';
       }
       t+='<span style="flex:1"></span>';
       if(a){
         t+='<button class="mini" onclick="dbOpenFor(\''+pv+'\')">浏览</button>';
+        t+='<button class="mini gray" onclick="dbRename(\''+pv+'\',\''+escA(a.alias||'')+'\')">改名</button>';
         t+='<button class="mini gray" onclick="delAcc(\''+pv+'\')">换号</button>';
       }else{
         t+='<button class="mini" onclick="openConn(\''+pv+'\')">连接</button>';
@@ -872,7 +905,7 @@ function paintDoubao(){
 function dbOpenFor(pv){
   DB_SLOT=pv; DB_STACK=[];
   $('dbPane').style.display='';
-  $('dbPaneName').textContent=PVCN[pv]||pv;
+  $('dbPaneName').textContent=DB_NAMES[pv]||PVCN[pv]||pv;
   dbGo('');
 }
 function dbClosePane(){ $('dbPane').style.display='none'; $('dbPane').dataset.userClosed='1'; }
@@ -1097,9 +1130,9 @@ function renderBatchRows(){
     }else{
       h+='<td style="padding:7px 4px"><span class="cd">-</span></td><td style="padding:7px 4px"><span class="cd">-</span></td>';
     }
-    // 状态
+    // 状态。错误里可能带换行（比如断点续扫的说明），要转成 br 才看得清
     h+='<td style="padding:7px 4px">';
-    if(!r.ok){h+='<span class="tag err">失败</span><div class="cd" style="font-size:11px;margin-top:3px" title="'+escA(r.error||'')+'">'+esc(r.error||'')+'</div>';}
+    if(!r.ok){h+='<span class="tag err">失败</span><div class="cd" style="font-size:11px;margin-top:3px;line-height:1.5" title="'+escA(r.error||'')+'">'+esc(r.error||'').replace(/\n/g,'<br>')+'</div>';}
     else if(r.exists){h+='<span class="tag off">已导入过</span>';}
     else {h+='<span class="tag ok">待导入</span>';}
     h+='</td></tr>';
@@ -1267,12 +1300,20 @@ function loadShares(page){
       var nm=s.share_url
         ?'<a class="shlk" href="'+escA(s.share_url)+'" target="_blank" rel="noopener" title="跳到网盘查看原分享（新标签页打开）">'+esc(cleanShow(s.show_name))+'<svg class="eic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>'
         :esc(cleanShow(s.show_name));
+      // 自己盘里导入的目录（share_id 形如 node:xxx）：没有分享、不会失效，
+      // 所以不给「追更 / 刷新 / 已失效」，只留「分类 / 隐藏」。
+      var isNode=(s.share_id||'').indexOf('node:')===0;
+      var colRefresh=isNode
+        ?'<td><span class="sub" title="这是你自己豆包盘里的目录，文件变动时重新导入即可">目录</span></td>'
+        :'<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>';
+      var ops='<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类">分类</button> ';
+      if(!isNode){
+        ops='<button class="mini" onclick="refreshShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+esc(s.passcode||'')+'\')">刷新</button> '+ops
+          +'<button class="mini danger" onclick="purgeShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+s.files+')">已失效</button> ';
+      }
+      ops+='<button class="mini gray" onclick="delShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\')">隐藏</button>';
       t+='<tr><td>'+nm+warn+'<div class="tmeta">'+esc(catPath)+'</div></td><td class="num">'+s.files+'</td><td class="tm">'+fmtTime(s.last_added)+'</td>'+
-        '<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>'+
-        '<td><button class="mini" onclick="refreshShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+esc(s.passcode||'')+'\')">刷新</button> '+
-        '<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类，以后追更出来的新剧集也归新分类">分类</button> '+
-        '<button class="mini danger" onclick="purgeShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+s.files+')">已失效</button> '+
-        '<button class="mini gray" onclick="delShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\')">隐藏</button></td></tr>';
+        colRefresh+'<td style="text-align:right">'+ops+'</td></tr>';
     }
     $('shareList').innerHTML=t+'</tbody>';
     renderSharePager();

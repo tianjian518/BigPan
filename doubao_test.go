@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"net/url"
+	"testing"
+)
 
 // 豆包分享链接解析：老格式可用、新格式明确拒绝。
 func TestParseDoubaoLink(t *testing.T) {
@@ -26,14 +29,19 @@ func TestParseDoubaoLink(t *testing.T) {
 
 // 伪链接解析：doubao://<槽位>/<node_id>
 func TestParseDoubaoOwnLink(t *testing.T) {
-	pv, id, ok := parseDoubaoOwnLink("doubao://doubao3/22359807859609602")
-	if !ok || pv != "doubao3" || id != "22359807859609602" {
-		t.Fatalf("got %q %q %v", pv, id, ok)
+	pv, id, name, ok := parseDoubaoOwnLink("doubao://doubao3/22359807859609602")
+	if !ok || pv != "doubao3" || id != "22359807859609602" || name != "" {
+		t.Fatalf("got %q %q %q %v", pv, id, name, ok)
 	}
-	if _, _, ok := parseDoubaoOwnLink("https://www.doubao.com/drive/s/abc"); ok {
+	// 带目录名（浏览面板生成的新格式）：名字要能解回来，含斜杠/空格也不许丢
+	pv, id, name, ok = parseDoubaoOwnLink("doubao://doubao1/1234567/" + url.PathEscape("动漫 剧集/第一季"))
+	if !ok || pv != "doubao1" || id != "1234567" || name != "动漫 剧集/第一季" {
+		t.Fatalf("带名字的伪链接解析错了：%q %q %q %v", pv, id, name, ok)
+	}
+	if _, _, _, ok := parseDoubaoOwnLink("https://www.doubao.com/drive/s/abc"); ok {
 		t.Fatal("普通链接不该被当成伪链接")
 	}
-	if _, _, ok := parseDoubaoOwnLink("doubao://doubao1"); ok {
+	if _, _, _, ok := parseDoubaoOwnLink("doubao://doubao1"); ok {
 		t.Fatal("缺 node_id 应当不识别")
 	}
 }

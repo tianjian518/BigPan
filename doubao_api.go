@@ -68,15 +68,176 @@ type dbMedia struct {
 type Doubao struct {
 	cookie string
 	hc     *http.Client
+	tr     *http.Transport
+
+	ipMu sync.Mutex
+	ips  []string // 最近一次解析到的出口 IP，用来判断「是不是全都冷却了」
+
+	base string // 仅测试用：把请求打到 mock 服务器
+}
+
+// endpoint 拼出接口地址。base 为空时走线上域名。
+func (d *Doubao) endpoint(path string) string {
+	b := d.base
+	if b == "" {
+		b = doubaoBase
+	}
+	return b + path + "?" + doubaoQs
+}
+
+// ---- 出口池（按 IP 冷却）----
+//
+// 豆包的风控是按「出口 IP」算的，不是按协议栈：
+// 同一个 IP 短时间打多了就返回 200 + 空体（连 429 都不给），
+// 换一条出口 IP 立刻恢复。沙箱全新 IPv4 出口连打 20 次全通，
+// 证明它没有封 IPv4 协议栈 —— 被封的是"那一个地址"，不是"那一种协议"。
+//
+// 所以策略：v4 优先，v4 冷却了就换 v6，两条都冷却就明确告诉用户
+// 「正在风控中」，绝不返回空目录冒充"这个文件夹是空的"。
+
+const (
+	dbCoolFirst = 90 * time.Second // 首次风控冷却（实测约 100 秒恢复，留点余量）
+	dbCoolMax   = 30 * time.Minute // 连续失败上限
+)
+
+type dbExitState struct {
+	downTo time.Time
+	fails  int
+}
+
+var (
+	dbExitMu sync.Mutex
+	dbExits  = map[string]*dbExitState{}
+)
+
+// dbExitUsable 判断某出口 IP 现在能不能用。冷却到期自动放行。
+func dbExitUsable(ip string) bool {
+	dbExitMu.Lock()
+	defer dbExitMu.Unlock()
+	st := dbExits[ip]
+	return st == nil || !time.Now().Before(st.downTo)
+}
+
+// dbExitFail 记一次风控，冷却时间翻倍增长，返回本次冷却时长。
+func dbExitFail(ip string) time.Duration {
+	dbExitMu.Lock()
+	defer dbExitMu.Unlock()
+	st := dbExits[ip]
+	if st == nil {
+		st = &dbExitState{}
+		dbExits[ip] = st
+	}
+	st.fails++
+	d := dbCoolFirst
+	for i := 1; i < st.fails; i++ {
+		if d >= dbCoolMax {
+			break
+		}
+		d *= 2
+	}
+	if d > dbCoolMax {
+		d = dbCoolMax
+	}
+	st.downTo = time.Now().Add(d)
+	return d
+}
+
+// dbExitOK 请求成功，清掉该 IP 的失败计数（恢复后重新排队）。
+func dbExitOK(ip string) {
+	if ip == "" {
+		return
+	}
+	dbExitMu.Lock()
+	delete(dbExits, ip)
+	dbExitMu.Unlock()
+}
+
+// dbExitWait 所有出口都在冷却时，返回最快那个还要等多久。
+func dbExitWait() time.Duration {
+	dbExitMu.Lock()
+	defer dbExitMu.Unlock()
+	now := time.Now()
+	var best time.Duration
+	for _, st := range dbExits {
+		if now.Before(st.downTo) {
+			if d := st.downTo.Sub(now); best == 0 || d < best {
+				best = d
+			}
+		}
+	}
+	return best
+}
+
+// dbThrottleErr 表示豆包整体风控中，附带预计恢复时间。
+// 这个错误会原样透到界面上，用户看到的是人话而不是"空目录"。
+type dbThrottleErr struct{ wait time.Duration }
+
+func (e *dbThrottleErr) Error() string {
+	m := int(e.wait.Minutes() + 0.99)
+	if m < 1 {
+		m = 1
+	}
+	return fmt.Sprintf("豆包正在风控中，请约 %d 分钟后再试（冷却后会自动恢复，不用重粘 Cookie）", m)
+}
+
+// isThrottleErr 判断是否风控错误。
+func isThrottleErr(err error) bool {
+	_, ok := err.(*dbThrottleErr)
+	return ok
+}
+
+// dbTrace 记录本次请求实际走了哪个出口 IP，用来在失败时精准冷却它。
+type dbTrace struct{ ip string }
+
+type dbTraceKey struct{}
+
+// blockedFor 判断这台机器上所有出口是不是都在冷却，是则返回还要等多久。
+//
+// 为什么不能只靠拨号时判断：http.Transport 会复用空闲连接，
+// 连接还在池子里时根本不会触发 DialContext，冷却就形同虚设。
+// 所以每次请求前先看一眼，全冷却就别白打。
+func (d *Doubao) blockedFor() time.Duration {
+	d.ipMu.Lock()
+	ips := d.ips
+	d.ipMu.Unlock()
+	if len(ips) == 0 {
+		return 0
+	}
+	dbExitMu.Lock()
+	defer dbExitMu.Unlock()
+	now := time.Now()
+	var best time.Duration
+	for _, ip := range ips {
+		st := dbExits[ip]
+		if st == nil || !now.Before(st.downTo) {
+			return 0 // 还有一条能用
+		}
+		if dd := st.downTo.Sub(now); best == 0 || dd < best {
+			best = dd
+		}
+	}
+	return best
+}
+
+// setIPs 记下解析结果（拨号时调用）。
+func (d *Doubao) setIPs(v4, v6 []string) {
+	all := make([]string, 0, len(v4)+len(v6))
+	all = append(all, v4...)
+	all = append(all, v6...)
+	d.ipMu.Lock()
+	d.ips = all
+	d.ipMu.Unlock()
 }
 
 // newDoubao 构造客户端。
 //
-// 【关键】豆包对 IPv4 出口有风控：同一账号同一请求，IPv4 返回 200 + 空体，
-// IPv6 正常返回数据（2026-10-23 实测：117.68.x.x 空，240e:95a:... 正常）。
-// Go 默认优先 IPv4，导致飞牛上「点目录进去是空的」。
-// 所以这里自定义拨号：解析域名后**先连 IPv6，失败再回退 IPv4**。
-func newDoubao(cookie string) *Doubao {
+// 拨号顺序：**IPv4 优先 → IPv6 兜底**，跳过正在冷却的 IP。
+// 全部冷却时直接返回 dbThrottleErr，不去撞无谓的请求。
+func newDoubao(cookie string) *Doubao { return newDoubaoAt(cookie, "") }
+
+// newDoubaoAt 同 newDoubao，但可以把请求打到指定 base（测试用）。
+func newDoubaoAt(cookie, base string) *Doubao {
+	d := &Doubao{cookie: strings.TrimSpace(cookie), base: base}
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	tr := &http.Transport{
 		ForceAttemptHTTP2:   true,
@@ -86,13 +247,24 @@ func newDoubao(cookie string) *Doubao {
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil || net.ParseIP(host) != nil {
-				return dialer.DialContext(ctx, network, addr)
+				// IP 直连（DNS 回退 / 测试服务器）：也要登记成出口，
+				// 否则 blockedFor 看不到任何 IP，冷却守卫就失效了。
+				if net.ParseIP(host) != nil {
+					d.setIPs([]string{host}, nil)
+				}
+				c, e := dialer.DialContext(ctx, network, addr)
+				if e == nil {
+					if t, ok := ctx.Value(dbTraceKey{}).(*dbTrace); ok {
+						t.ip = host
+					}
+				}
+				return c, e
 			}
 			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 			if err != nil || len(ips) == 0 {
 				return dialer.DialContext(ctx, network, addr)
 			}
-			var v6, v4 []string
+			var v4, v6 []string
 			for _, ia := range ips {
 				if ia.IP.To4() == nil {
 					v6 = append(v6, ia.IP.String())
@@ -100,21 +272,30 @@ func newDoubao(cookie string) *Doubao {
 					v4 = append(v4, ia.IP.String())
 				}
 			}
-			for _, list := range [][]string{v6, v4} {
+			d.setIPs(v4, v6) // 记下这台机器有哪些出口，post 前用来判断全冷却
+			for _, list := range [][]string{v4, v6} {
 				for _, ip := range list {
+					if !dbExitUsable(ip) {
+						continue // 这条出口正在冷却，换下一条
+					}
 					c, e := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, port))
 					if e == nil {
+						if t, ok := ctx.Value(dbTraceKey{}).(*dbTrace); ok {
+							t.ip = ip
+						}
 						return c, nil
 					}
 				}
 			}
-			return nil, fmt.Errorf("连接 %s 失败（IPv6/IPv4 均不可达）", host)
+			if w := dbExitWait(); w > 0 {
+				return nil, &dbThrottleErr{wait: w}
+			}
+			return nil, fmt.Errorf("连接 %s 失败（IPv4/IPv6 均不可达）", host)
 		},
 	}
-	return &Doubao{
-		cookie: strings.TrimSpace(cookie),
-		hc:     &http.Client{Timeout: 30 * time.Second, Transport: tr},
-	}
+	d.tr = tr
+	d.hc = &http.Client{Timeout: 30 * time.Second, Transport: tr}
+	return d
 }
 
 // ---- 全局限速 ----
@@ -142,23 +323,56 @@ func dbReqID() string {
 	return hex.EncodeToString(b)
 }
 
+// coolDown 把这次用的出口 IP 打进冷却，并清掉空闲连接。
+// 不清连接的话下一次请求会复用同一条 TCP，等于还用同一个 IP，白等。
+func (d *Doubao) coolDown(ip string) {
+	if ip == "" {
+		return
+	}
+	dbExitFail(ip)
+	if d.tr != nil {
+		d.tr.CloseIdleConnections()
+	}
+}
+
 // post 调一个豆包接口，返回 data 原始 JSON。
-// 命中限流（HTTP 429 或返回体含频繁提示）时退避重试，最多 3 次。
+//
+// 重试策略（配合出口池）：
+//   - 命中风控（429 / 200+空体 / code 限流）→ 冷却当前出口 IP，
+//     **立刻**换下一条出口重试，不做无意义的等待；
+//   - 纯网络失败（连不上、超时）→ 按 1s / 2s / 3s 退避；
+//   - 所有出口都在冷却 → 返回 dbThrottleErr（人话提示），不返回空数据。
 func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 	if d.cookie == "" {
 		return nil, fmt.Errorf("豆包未登录（请先粘贴 Cookie）")
+	}
+	// 连接池里的空闲连接会绕过拨号，所以每次请求前先看一眼出口状态：
+	// 全都冷却就直接给提示，别拿用户的等待时间去撞墙。
+	if w := d.blockedFor(); w > 0 {
+		return nil, &dbThrottleErr{wait: w}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Second) // 2s / 4s
+	limitHit := false // 上一轮是不是风控失败（是则立刻换出口，不退避）
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 && !limitHit {
+			time.Sleep(time.Duration(attempt) * time.Second) // 1s / 2s / 3s
 		}
+		limitHit = false
 		dbThrottle()
-		req, err := http.NewRequest(http.MethodPost, doubaoBase+path+"?"+doubaoQs, bytes.NewReader(payload))
+		// 每一轮都重新看一次出口：上一轮可能刚把 v4 打黑，
+		// 这时如果 v6 也没了就别再白打一轮。
+		if w := d.blockedFor(); w > 0 {
+			return nil, &dbThrottleErr{wait: w}
+		}
+
+		trace := &dbTrace{}
+		ctx := context.WithValue(context.Background(), dbTraceKey{}, trace)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			d.endpoint(path), bytes.NewReader(payload))
 		if err != nil {
 			return nil, err
 		}
@@ -173,6 +387,9 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 
 		resp, err := d.hc.Do(req)
 		if err != nil {
+			if isThrottleErr(err) {
+				return nil, err // 全部出口冷却，直接告诉用户
+			}
 			lastErr = fmt.Errorf("连接豆包失败：%w", err)
 			continue
 		}
@@ -183,16 +400,20 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 			continue
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
-			lastErr = fmt.Errorf("豆包接口限流，稍后重试")
+			d.coolDown(trace.ip)
+			lastErr = fmt.Errorf("豆包接口限流")
+			limitHit = true
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("豆包返回 HTTP %d：%s", resp.StatusCode, dbSnippet(raw))
 		}
-		// 豆包限流时会返回 HTTP 200 + **空响应体**（不是 429）。
-		// 早前这里直接当「无法识别」失败，用户点目录就遇到「进去是空的」。
+		// 豆包风控时返回 HTTP 200 + **空响应体**（不是 429）。
+		// 这是当前出口 IP 被限，不是「这个目录本来就是空的」。
 		if len(bytes.TrimSpace(raw)) == 0 {
-			lastErr = fmt.Errorf("豆包返回空响应（限流）")
+			d.coolDown(trace.ip)
+			lastErr = fmt.Errorf("豆包返回空响应（出口被风控）")
+			limitHit = true
 			continue
 		}
 		var out struct {
@@ -211,7 +432,9 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 			}
 			low := strings.ToLower(msg)
 			if strings.Contains(low, "too many") || strings.Contains(msg, "频繁") || out.Code == 429 {
+				d.coolDown(trace.ip)
 				lastErr = fmt.Errorf("豆包接口限流：%s", msg)
+				limitHit = true
 				continue
 			}
 			switch out.Code {
@@ -224,10 +447,17 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 			}
 			return nil, fmt.Errorf("豆包接口错误 %d：%s", out.Code, msg)
 		}
+		dbExitOK(trace.ip) // 这条出口是好的，放回池子
 		return out.Data, nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("豆包接口请求失败")
+	}
+	// 试完所有出口还是被限 → 给明确提示，不要拿"空目录"糊弄用户
+	if limitHit {
+		if w := dbExitWait(); w > 0 {
+			return nil, &dbThrottleErr{wait: w}
+		}
 	}
 	return nil, lastErr
 }
@@ -289,6 +519,10 @@ func (d *Doubao) dbListDirPage(nodeID, cursor string) ([]dbNode, error) {
 
 // dbListDirAll 列完整个目录（自动翻页）。
 // 豆包单个目录超过一页时会给 has_more + next_cursor，不翻页就会漏文件。
+//
+// 中途失败**必须整单失败**，不能拿半截数据当完整结果 ——
+// 那正是之前「扫描少了几千个文件」的元凶之一：前几页正常、第 4 页被风控，
+// 代码 break 后把前 3 页交出去，看起来一切正常但少了 90% 的内容。
 func (d *Doubao) dbListDirAll(nodeID string) ([]dbNode, error) {
 	var all []dbNode
 	cursor := ""
@@ -299,17 +533,11 @@ func (d *Doubao) dbListDirAll(nodeID string) ([]dbNode, error) {
 		}
 		data, err := d.post("/samantha/aispace/node_info", body)
 		if err != nil {
-			if page == 0 {
-				return nil, err
-			}
-			break // 翻页中途失败就用手上这批，不要整单失败
+			return nil, err
 		}
 		var out dbPage
 		if err := json.Unmarshal(data, &out); err != nil {
-			if page == 0 {
-				return nil, fmt.Errorf("豆包目录结构异常：%s", dbSnippet(data))
-			}
-			break
+			return nil, fmt.Errorf("豆包目录结构异常：%s", dbSnippet(data))
 		}
 		all = append(all, out.Children...)
 		if !out.HasMore || out.NextCursor == "" || out.NextCursor == "-1" {
@@ -355,7 +583,7 @@ func (d *Doubao) dbShareOverview(shareID string) (title string, nodes []dbNode, 
 	return title, out.NodeList, nil
 }
 
-// dbShareListDir 列分享内某个目录（自动翻页）。
+// dbShareListDir 列分享内某个目录（自动翻页）。中途失败同样整单失败。
 func (d *Doubao) dbShareListDir(shareID, nodeID string) ([]dbNode, error) {
 	var all []dbNode
 	cursor := ""
@@ -366,17 +594,11 @@ func (d *Doubao) dbShareListDir(shareID, nodeID string) ([]dbNode, error) {
 		}
 		data, err := d.post("/samantha/aispace/share/node_info", body)
 		if err != nil {
-			if page == 0 {
-				return nil, err
-			}
-			break
+			return nil, err
 		}
 		var out dbPage
 		if err := json.Unmarshal(data, &out); err != nil {
-			if page == 0 {
-				return nil, fmt.Errorf("豆包分享目录结构异常：%s", dbSnippet(data))
-			}
-			break
+			return nil, fmt.Errorf("豆包分享目录结构异常：%s", dbSnippet(data))
 		}
 		all = append(all, out.Children...)
 		if !out.HasMore || out.NextCursor == "" || out.NextCursor == "-1" {

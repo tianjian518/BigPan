@@ -658,8 +658,8 @@ func shareURL(provider, shareID, passcode string) string {
 		return "https://drive.uc.cn/s/" + shareID + q("pwd", passcode)
 	}
 	if strings.HasPrefix(provider, "doubao") {
-		if shareID == "" {
-			return "" // 自己盘里的条目没有分享链接
+		if shareID == "" || doubaoIsNodeID(shareID) {
+			return "" // 自己盘里的条目没有公开分享链接
 		}
 		return "https://www.doubao.com/drive/s/" + shareID
 	}

@@ -30,6 +30,12 @@ type Account struct {
 	Cookie   string    `json:"cookie"`   // 凭证字符串
 	LoginAt  time.Time `json:"login_at"`
 
+	// Alias 是用户自己起的别名（如「主号」「小号」）。
+	// 豆包有 4 个槽位，光看「豆包1/2/3/4」根本分不清谁是谁；
+	// 官方又没有任何用户信息接口（/samantha/user/info 等 8 个路径全 404），
+	// 所以自动标识只能靠 Cookie 里的 uid_tt 短码，真正的名字让用户自己起。
+	Alias string `json:"alias,omitempty"`
+
 	// —— 夸克 TV（provider="quark_tv"）专用字段 ——
 	// 单账号模型下 Cookie 字段复用：TV 账号的 Cookie 存 refresh_token（长期有效）。
 	// access_token 是短命凭证，这里存一份避免每次播放都刷新；播放中 token 被
@@ -459,9 +465,15 @@ func apiAccountImport(as *AccountStore) http.HandlerFunc {
 				writeJSON(w, map[string]interface{}{"ok": false, "error": "Cookie 验证失败：" + err.Error()})
 				return
 			}
+			// 保留旧别名：同一个槽位换号时才重置
+			alias := ""
+			if old := as.Get(req.Provider); old != nil && old.Cookie == req.Cookie {
+				alias = old.Alias
+			}
 			installAccount(as, Account{
 				Provider: req.Provider,
-				Label:    providerCN(req.Provider) + "（" + strconv.Itoa(len(children)) + " 个顶层目录）",
+				Label:    doubaoTag(req.Cookie),
+				Alias:    alias,
 				Cookie:   req.Cookie,
 				LoginAt:  time.Now(),
 			})
@@ -545,6 +557,36 @@ func apiAccountImport(as *AccountStore) http.HandlerFunc {
 }
 
 // apiAccounts 账号列表 / 删除
+// apiAccountLabel 改账号别名（目前给豆包多账号用）。
+func apiAccountLabel(as *AccountStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Provider string `json:"provider"`
+			Label    string `json:"label"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "请求格式错误"})
+			return
+		}
+		a := as.Get(req.Provider)
+		if a == nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "账号不存在"})
+			return
+		}
+		lbl := strings.TrimSpace(req.Label)
+		if r := []rune(lbl); len(r) > 20 {
+			lbl = string(r[:20])
+		}
+		a.Alias = lbl
+		as.Put(*a)
+		writeJSON(w, map[string]interface{}{"ok": true})
+	}
+}
+
 func apiAccounts(as *AccountStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 路径形如 /api/accounts 或 /api/accounts/115
@@ -559,12 +601,18 @@ func apiAccounts(as *AccountStore) http.HandlerFunc {
 			type view struct {
 				Provider string    `json:"provider"`
 				Label    string    `json:"label"`
+				Alias    string    `json:"alias,omitempty"`
+				Tag      string    `json:"tag,omitempty"` // 豆包：uid 短码，用来区分多个账号
 				LoginAt  time.Time `json:"login_at"`
 			}
 			list := as.List()
 			out := make([]view, 0, len(list))
 			for _, a := range list {
-				out = append(out, view{a.Provider, a.Label, a.LoginAt})
+				v := view{Provider: a.Provider, Label: a.Label, Alias: a.Alias, LoginAt: a.LoginAt}
+				if strings.HasPrefix(a.Provider, "doubao") {
+					v.Tag = doubaoTag(a.Cookie)
+				}
+				out = append(out, v)
 			}
 			writeJSON(w, map[string]interface{}{"ok": true, "accounts": out})
 		default:

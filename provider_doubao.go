@@ -20,9 +20,12 @@ package main
 // ---------------------------------------------------------------------------
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,6 +35,42 @@ import (
 
 // doubaoSlots 预留的账号槽位数。加账号就改这个数（UI 会同步多一张卡片）。
 const doubaoSlots = 4
+
+// doubaoNodeIDPrefix 标记「自己盘里的目录」。
+//
+// 它不是分享 ID，但必须占住 ShareID 这个字段，否则分享表的键会退化成
+// "doubao1|"（空分享 ID），用户从自己盘导入第二个目录时直接覆盖第一个 ——
+// 表现就是首页列表里豆包永远只剩一条、名字还是最后导的那个。
+//
+// 同时巡检靠这个前缀认出「这不是分享」，跳过探活：自己盘条目要扫目录才
+// 知道还在不在，几千个条目轮着扫必然触发风控。
+const doubaoNodeIDPrefix = "node:"
+
+// doubaoIsNodeID 判断某个 ShareID 是不是「自己盘的目录」。
+func doubaoIsNodeID(sid string) bool {
+	return strings.HasPrefix(sid, doubaoNodeIDPrefix)
+}
+
+// doubaoTag 取一个能区分账号的短标识。
+//
+// 豆包没有任何公开的用户信息接口（/samantha/user/info、/alice/user/info 等
+// 8 个路径实测全 404），JWT 里也只有 uid 没有昵称。能稳定拿到的只有
+// Cookie 里的 uid_tt：32 位哈希、每个账号不同、不会随 7 天的 token 过期。
+// 4 个槽位靠这个短码至少能分清「是不是同一个号」。
+func doubaoTag(cookie string) string {
+	for _, kv := range strings.Split(cookie, ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(kv), "=")
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(k) == "uid_tt" && len(v) >= 6 {
+			return v[:6]
+		}
+	}
+	// 没有 uid_tt（只粘了 sessionid）：用整段 Cookie 的短哈希兜底
+	sum := sha1.Sum([]byte(cookie))
+	return hex.EncodeToString(sum[:])[:6]
+}
 
 // doubaoShareRe 老格式分享：/drive/s/{16位hex}
 var doubaoShareRe = regexp.MustCompile(`(?i)doubao\.com/drive/s/([A-Za-z0-9]{8,40})`)
@@ -54,17 +93,28 @@ func parseDoubaoLink(raw string) (string, error) {
 	return "", fmt.Errorf("这不是豆包分享链接")
 }
 
-// parseDoubaoOwnLink 解析自己盘的伪链接 doubao://<provider>/<node_id>。
-func parseDoubaoOwnLink(raw string) (provider, nodeID string, ok bool) {
+// parseDoubaoOwnLink 解析自己盘的伪链接：
+//
+//	doubao://<provider>/<node_id>[/<目录名>]
+//
+// 第三段（目录名）是可选的、URL 编码的，只用来给导入的剧起标题 ——
+// 不带名字的话，扫一个多子目录的容器就只能叫「豆包文件」，首页列表里认不出来。
+// 老链接（不带名字）仍然可用。
+func parseDoubaoOwnLink(raw string) (provider, nodeID, name string, ok bool) {
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "doubao://") {
-		return "", "", false
+		return "", "", "", false
 	}
-	parts := strings.SplitN(strings.TrimPrefix(raw, "doubao://"), "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", false
+	parts := strings.SplitN(strings.TrimPrefix(raw, "doubao://"), "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", "", false
 	}
-	return parts[0], parts[1], true
+	if len(parts) == 3 {
+		if n, err := url.PathUnescape(parts[2]); err == nil {
+			name = strings.TrimSpace(n)
+		}
+	}
+	return parts[0], parts[1], name, true
 }
 
 // ---- provider ----
@@ -82,7 +132,7 @@ func (p doubaoProvider) Name() string { return "doubao" + strconv.Itoa(p.slot) }
 func (p doubaoProvider) MatchLink(link string) bool {
 	link = strings.TrimSpace(link)
 	// 自己的盘伪链接：槽位对上才认，否则 doubao1 会抢走 doubao3 的链接
-	if pv, _, ok := parseDoubaoOwnLink(link); ok {
+	if pv, _, _, ok := parseDoubaoOwnLink(link); ok {
 		return pv == p.Name()
 	}
 	return doubaoShareRe.MatchString(link) || doubaoShrRe.MatchString(link)
@@ -98,15 +148,19 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 	}
 
 	// A. 自己的盘
-	if pv, nodeID, ok := parseDoubaoOwnLink(link); ok {
+	if pv, nodeID, name, ok := parseDoubaoOwnLink(link); ok {
 		if pv != p.Name() {
 			return ShareInfo{}, fmt.Errorf("这个链接属于 %s，不是 %s", pv, p.Name())
 		}
-		title, files, err := scanDoubaoOwn(cli, nodeID)
+		title, files, err := scanDoubaoOwn(cli, p.Name(), nodeID, name)
 		if err != nil {
 			return ShareInfo{}, err
 		}
-		return ShareInfo{Provider: p.Name(), Title: title, Files: files, Logged: true}, nil
+		return ShareInfo{
+			Provider: p.Name(), Title: title,
+			ShareID: doubaoNodeIDPrefix + nodeID, // 用 node_id 当唯一键，避免多个目录互相覆盖
+			Files:   files, Logged: true,
+		}, nil
 	}
 
 	// B. 别人的分享
@@ -114,7 +168,7 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 	if err != nil {
 		return ShareInfo{}, err
 	}
-	title, files, err := scanDoubaoShare(cli, shareID)
+	title, files, err := scanDoubaoShare(cli, p.Name(), shareID)
 	if err != nil {
 		return ShareInfo{}, err
 	}
@@ -126,10 +180,10 @@ func (p doubaoProvider) RefreshShare(shareID, passcode string) (string, []ShareF
 	if cli == nil {
 		return "", nil, fmt.Errorf("%s 还没粘 Cookie", providerCN(p.Name()))
 	}
-	if shareID == "" {
+	if shareID == "" || doubaoIsNodeID(shareID) {
 		return "", nil, fmt.Errorf("自己盘里的条目不参与追更，重新导入即可")
 	}
-	return scanDoubaoShare(cli, shareID)
+	return scanDoubaoShare(cli, p.Name(), shareID)
 }
 
 func (p doubaoProvider) ResolvePlay(item *Item) (PlayTarget, error) {
@@ -138,8 +192,12 @@ func (p doubaoProvider) ResolvePlay(item *Item) (PlayTarget, error) {
 		return PlayTarget{}, fmt.Errorf("%s 还没粘 Cookie", providerCN(p.Name()))
 	}
 	// item.FileID 存 node_id；item.FidToken 存豆包的 key（多数文件为空串）；
-	// item.ShareID 非空表示来自分享，取链要带 share_id。
-	list, err := cli.dbPlayInfo(item.FileID, item.FidToken, item.ShareID)
+	// item.ShareID 非空且不是 node: 前缀，才表示来自分享，取链要带 share_id。
+	sid := item.ShareID
+	if doubaoIsNodeID(sid) {
+		sid = "" // 自己盘的文件不能带 share_id，否则接口报参数错误
+	}
+	list, err := cli.dbPlayInfo(item.FileID, item.FidToken, sid)
 	if err != nil {
 		return PlayTarget{}, err
 	}
@@ -193,41 +251,81 @@ func resetDoubaoClients() {
 //
 // 上限只做「防跑飞」保护（2 万文件 / 5 千目录），不是业务限制：
 // 之前写的 800 文件 / 300 目录会静默漏文件，用户的库有几千个视频。
-func scanDoubaoOwn(cli *Doubao, nodeID string) (string, []ShareFile, error) {
+//
+// 两个硬要求：
+//  1. 任何目录读失败都**立刻中止**，不能 continue 跳过 —— 跳过就是静默漏文件；
+//  2. 中止前把进度落盘，用户过几分钟再点一次导入就从断点接着扫。
+func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile, error) {
 	const maxFiles, maxDirs = 20000, 5000
-	type job struct {
-		id, prefix string
+	type job = dbScanJob
+
+	key := "own|" + slot + "|" + nodeID
+	st := dbScanTake(key)
+
+	seen := make(map[string]bool, len(st.Seen)+64)
+	for _, id := range st.Seen {
+		seen[id] = true
 	}
-	queue := []job{{id: nodeID}}
-	seen := map[string]bool{nodeID: true}
-	title := "豆包文件"
-	var files []ShareFile
-	first := true
+	queue := append([]job(nil), st.Queue...)
+	if len(queue) == 0 && len(seen) == 0 {
+		queue = append(queue, job{ID: nodeID})
+		seen[nodeID] = true
+	}
+	files := st.Files
+	title := st.Title
+	if title == "" {
+		// 优先用伪链接里带的目录名（浏览面板生成的都有），
+		// 没有才退到通用名 —— 否则首页列表里会堆一排「豆包文件」。
+		title = strings.TrimSpace(hint)
+	}
+	if title == "" {
+		title = "豆包文件"
+	}
+	if len(st.Seen) > 0 && len(queue) > 0 {
+		log.Printf("[豆包] 从断点继续：已扫 %d 个目录 / 已有 %d 个视频 / 还剩 %d 个目录待扫",
+			len(seen), len(files), len(queue))
+	}
+
 	start := time.Now()
+	dirty := 0
+	// snapshot 把当前现场拍成可落盘的快照。
+	snapshot := func() *dbScanState {
+		ids := make([]string, 0, len(seen))
+		for id := range seen {
+			ids = append(ids, id)
+		}
+		return &dbScanState{
+			Key: key, Title: title, Queue: append([]job(nil), queue...),
+			Seen: ids, Files: files,
+		}
+	}
+
 	for len(queue) > 0 && len(files) < maxFiles && len(seen) < maxDirs {
 		j := queue[0]
 		queue = queue[1:]
-		list, err := cli.dbListDirAll(j.id)
+		list, err := cli.dbListDirAll(j.ID)
 		if err != nil {
-			if first {
-				return "", nil, fmt.Errorf("读取豆包目录失败：%w", err)
-			}
-			continue
+			// 这个目录还没扫完，必须放回队首再存盘 ——
+			// 否则它已经在 seen 里、又不在队列里，续扫时会被永久跳过，
+			// 连带它下面的所有视频一起消失（实测少 3 个文件就是这么来的）。
+			queue = append([]job{j}, queue...)
+			dbScanPut(snapshot())
+			return "", nil, fmt.Errorf("%w\n已扫到 %d 个目录 / %d 个视频，进度已保存；恢复后再点一次导入会接着扫，不用从头开始",
+				err, len(seen), len(files))
 		}
-		first = false
 		// 单层且只有一个目录时，用它的名字当剧名（和 UC 的折叠规则一致）
-		if j.id == nodeID && len(list) == 1 && list[0].IsDir() {
+		if j.ID == nodeID && len(list) == 1 && list[0].IsDir() {
 			title = list[0].Name
 		}
 		for _, n := range list {
 			p := n.Name
-			if j.prefix != "" {
-				p = j.prefix + "/" + n.Name
+			if j.Prefix != "" {
+				p = j.Prefix + "/" + n.Name
 			}
 			if n.IsDir() {
 				if !seen[n.ID] {
 					seen[n.ID] = true
-					queue = append(queue, job{id: n.ID, prefix: p})
+					queue = append(queue, job{ID: n.ID, Prefix: p})
 				}
 				continue
 			}
@@ -237,10 +335,16 @@ func scanDoubaoOwn(cli *Doubao, nodeID string) (string, []ShareFile, error) {
 				})
 			}
 		}
+		// 每 30 个目录存一次盘：崩溃/重启也不丢太多进度
+		if dirty++; dirty >= 30 {
+			dirty = 0
+			dbScanPut(snapshot())
+		}
 		if len(files) > 0 && len(files)/200 > (len(files)-len(list))/200 {
 			log.Printf("[豆包] 扫描中：%d 个目录 / %d 个视频 / 已用 %v", len(seen), len(files), time.Since(start).Round(time.Second))
 		}
 	}
+	dbScanDone(key)
 	log.Printf("[豆包] 扫描完成：%d 个目录 / %d 个视频 / 耗时 %v", len(seen), len(files), time.Since(start).Round(time.Second))
 	if len(files) == 0 {
 		return "", nil, fmt.Errorf("这个目录里没有视频文件")
@@ -248,46 +352,65 @@ func scanDoubaoOwn(cli *Doubao, nodeID string) (string, []ShareFile, error) {
 	return title, files, nil
 }
 
-// scanDoubaoShare 递归扫描别人的分享目录树。
-func scanDoubaoShare(cli *Doubao, shareID string) (string, []ShareFile, error) {
-	title, nodes, err := cli.dbShareOverview(shareID)
-	if err != nil {
-		return "", nil, err
-	}
-	type job struct {
-		id, prefix string
-	}
-	seen := map[string]bool{}
-	var queue []job
-	var files []ShareFile
+// scanDoubaoShare 递归扫描别人的分享目录树。规则同自己的盘：失败即停、断点续传。
+func scanDoubaoShare(cli *Doubao, slot, shareID string) (string, []ShareFile, error) {
+	type job = dbScanJob
+	key := "share|" + slot + "|" + shareID
+	st := dbScanTake(key)
 
-	for _, n := range nodes {
-		if n.IsDir() {
-			if !seen[n.ID] {
-				seen[n.ID] = true
-				queue = append(queue, job{id: n.ID, prefix: n.Name})
-			}
-			continue
-		}
-		if isVideo(n.Name) {
-			files = append(files, ShareFile{
-				ID: n.ID, Name: n.Name, Size: n.Size, Path: n.Name, Code: shareID, FidToken: n.Key,
-			})
-		}
+	seen := make(map[string]bool, len(st.Seen)+64)
+	for _, id := range st.Seen {
+		seen[id] = true
 	}
-	for len(queue) > 0 && len(files) < 20000 && len(seen) < 5000 {
-		j := queue[0]
-		queue = queue[1:]
-		list, err := cli.dbShareListDir(shareID, j.id)
+	queue := append([]job(nil), st.Queue...)
+	files := st.Files
+	title := st.Title
+
+	if len(seen) == 0 {
+		var nodes []dbNode
+		var err error
+		title, nodes, err = cli.dbShareOverview(shareID)
 		if err != nil {
-			continue
+			return "", nil, err
 		}
-		for _, n := range list {
-			p := j.prefix + "/" + n.Name
+		for _, n := range nodes {
 			if n.IsDir() {
 				if !seen[n.ID] {
 					seen[n.ID] = true
-					queue = append(queue, job{id: n.ID, prefix: p})
+					queue = append(queue, job{ID: n.ID, Prefix: n.Name})
+				}
+				continue
+			}
+			if isVideo(n.Name) {
+				files = append(files, ShareFile{
+					ID: n.ID, Name: n.Name, Size: n.Size, Path: n.Name, Code: shareID, FidToken: n.Key,
+				})
+			}
+		}
+	} else {
+		log.Printf("[豆包] 从断点继续（分享）：已扫 %d 个目录 / 已有 %d 个视频", len(seen), len(files))
+	}
+
+	dirty := 0
+	for len(queue) > 0 && len(files) < 20000 && len(seen) < 5000 {
+		j := queue[0]
+		queue = queue[1:]
+		list, err := cli.dbShareListDir(shareID, j.ID)
+		if err != nil {
+			queue = append([]job{j}, queue...) // 同自己盘：正在扫的这个不能丢
+			ids := make([]string, 0, len(seen))
+			for id := range seen {
+				ids = append(ids, id)
+			}
+			dbScanPut(&dbScanState{Key: key, Title: title, Queue: append([]job(nil), queue...), Seen: ids, Files: files})
+			return "", nil, fmt.Errorf("%w\n已扫到 %d 个目录 / %d 个视频，进度已保存；恢复后再点一次导入会接着扫", err, len(seen), len(files))
+		}
+		for _, n := range list {
+			p := j.Prefix + "/" + n.Name
+			if n.IsDir() {
+				if !seen[n.ID] {
+					seen[n.ID] = true
+					queue = append(queue, job{ID: n.ID, Prefix: p})
 				}
 				continue
 			}
@@ -297,7 +420,16 @@ func scanDoubaoShare(cli *Doubao, shareID string) (string, []ShareFile, error) {
 				})
 			}
 		}
+		if dirty++; dirty >= 30 {
+			dirty = 0
+			ids := make([]string, 0, len(seen))
+			for id := range seen {
+				ids = append(ids, id)
+			}
+			dbScanPut(&dbScanState{Key: key, Title: title, Queue: append([]job(nil), queue...), Seen: ids, Files: files})
+		}
 	}
+	dbScanDone(key)
 	if len(files) == 0 {
 		return "", nil, fmt.Errorf("这个分享里没有视频文件")
 	}
@@ -353,10 +485,10 @@ func apiDoubaoBrowse(as *AccountStore) http.HandlerFunc {
 		for _, n := range nodes {
 			it := doubaoBrowseItem{Name: n.Name, ID: n.ID, IsDir: n.IsDir(), Size: n.Size}
 			if n.IsDir() {
-				it.Link = "doubao://" + pv + "/" + n.ID
+				it.Link = "doubao://" + pv + "/" + n.ID + "/" + url.PathEscape(n.Name)
 			} else {
 				it.Video = isVideo(n.Name)
-				it.Link = "doubao://" + pv + "/" + n.ID
+				it.Link = "doubao://" + pv + "/" + n.ID + "/" + url.PathEscape(n.Name)
 			}
 			items = append(items, it)
 		}
