@@ -480,6 +480,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <div class="card" id="dbPane" style="display:none">
         <div class="chd"><b id="dbPaneName">浏览</b><span class="csub" id="dbCrumb">根目录</span></div>
         <div class="row" style="margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="mini gray" onclick="dbUp()">上一级</button>
           <button class="mini gray" onclick="dbGo('')">回根目录</button>
           <button class="mini gray" onclick="dbClosePane()">收起</button>
         </div>
@@ -864,6 +865,8 @@ function paintDoubao(){
       t+='</div>';
     }
     $('dbAccts').innerHTML=t;
+    var on=(d.accounts||[]).filter(function(a){return (a.provider||'').indexOf('doubao')===0});
+    if(on.length===1 && !$('dbPane').dataset.userClosed) dbOpenFor(on[0].provider);
   }).catch(function(){ $('dbAccts').innerHTML='<div class="sub">读取失败，刷新页面试试</div>' });
 }
 function dbOpenFor(pv){
@@ -872,7 +875,12 @@ function dbOpenFor(pv){
   $('dbPaneName').textContent=PVCN[pv]||pv;
   dbGo('');
 }
-function dbClosePane(){ $('dbPane').style.display='none'; }
+function dbClosePane(){ $('dbPane').style.display='none'; $('dbPane').dataset.userClosed='1'; }
+function dbUp(){
+  if(DB_STACK.length<=1){ dbGo(''); return; }
+  DB_STACK.pop();
+  dbGo(DB_STACK[DB_STACK.length-1].id);
+}
 function dbGo(nodeId){
   if(!nodeId)DB_STACK=[];
   $('dbList').innerHTML='<div class="loading"><span class="spin"></span>读取中…</div>';
@@ -887,15 +895,15 @@ function dbGo(nodeId){
        t+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.is_dir?'📁 ':(it.video?'🎬 ':'📄 '))+esc(it.name)+'</span>';
        t+='<span class="sub" style="white-space:nowrap">'+(it.is_dir?'':humanSize(it.size))+'</span>';
        if(it.is_dir){
-         t+='<button class="mini" onclick="dbEnter(\''+escA(it.id)+'\',\''+escA(it.name)+'\')">进入</button>';
+         t+='<button class="mini" onclick="dbEnter(\''+escA(it.id)+'\',\''+encodeURIComponent(it.name)+'\')">进入</button>';
          t+='<button class="mini gray" onclick="dbPick(\''+escA(it.link)+'\')">导入此目录</button>';
        }
        t+='</div>';
      });
-     $('dbList').innerHTML=t||'<div class="sub">（这个目录是空的）</div>';
+     $('dbList').innerHTML=t||('<div class="sub">这个目录返回 0 项'+(nodeId?('（node_id='+esc(nodeId)+'）'):'')+'</div>');
    }).catch(function(){ $('dbList').innerHTML='<div class="sub">读取失败，检查 Cookie 是否过期</div>' });
 }
-function dbEnter(id,name){ DB_STACK.push({id:id,name:name}); dbGo(id); }
+function dbEnter(id,name){ DB_STACK.push({id:id,name:decodeURIComponent(name)}); dbGo(id); }
 function dbPick(link){
   $('batchText').value=link;
   nav('import');

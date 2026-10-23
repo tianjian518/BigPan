@@ -18,11 +18,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,9 +37,9 @@ const (
 	doubaoUA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 	doubaoQs   = "version_code=20800&device_platform=web&aid=497858"
 
-	// doubaoGap 全局限速间隔。实测 0.35s 间隔连打 8 次全过，取 350ms；
-	// 真触发 429 还有退避重试兜底。大库扫描（几千文件）靠它压时间。
-	doubaoGap = 350 * time.Millisecond
+	// doubaoGap 全局限速间隔。实测 0.35s 连打 8 次能过，但连续浏览目录时
+	// 贴边会撞上限流（返回空体），取 400ms 留点余量；429/空体都有退避重试。
+	doubaoGap = 400 * time.Millisecond
 )
 
 // dbNode 是豆包的节点（文件或目录）。node_type：1=目录 2=普通文件 6=视频。
@@ -68,8 +70,51 @@ type Doubao struct {
 	hc     *http.Client
 }
 
+// newDoubao 构造客户端。
+//
+// 【关键】豆包对 IPv4 出口有风控：同一账号同一请求，IPv4 返回 200 + 空体，
+// IPv6 正常返回数据（2026-10-23 实测：117.68.x.x 空，240e:95a:... 正常）。
+// Go 默认优先 IPv4，导致飞牛上「点目录进去是空的」。
+// 所以这里自定义拨号：解析域名后**先连 IPv6，失败再回退 IPv4**。
 func newDoubao(cookie string) *Doubao {
-	return &Doubao{cookie: strings.TrimSpace(cookie), hc: &http.Client{Timeout: 30 * time.Second}}
+	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	tr := &http.Transport{
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        16,
+		IdleConnTimeout:     60 * time.Second,
+		TLSHandshakeTimeout: 15 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil || net.ParseIP(host) != nil {
+				return dialer.DialContext(ctx, network, addr)
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil || len(ips) == 0 {
+				return dialer.DialContext(ctx, network, addr)
+			}
+			var v6, v4 []string
+			for _, ia := range ips {
+				if ia.IP.To4() == nil {
+					v6 = append(v6, ia.IP.String())
+				} else {
+					v4 = append(v4, ia.IP.String())
+				}
+			}
+			for _, list := range [][]string{v6, v4} {
+				for _, ip := range list {
+					c, e := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, port))
+					if e == nil {
+						return c, nil
+					}
+				}
+			}
+			return nil, fmt.Errorf("连接 %s 失败（IPv6/IPv4 均不可达）", host)
+		},
+	}
+	return &Doubao{
+		cookie: strings.TrimSpace(cookie),
+		hc:     &http.Client{Timeout: 30 * time.Second, Transport: tr},
+	}
 }
 
 // ---- 全局限速 ----
@@ -144,6 +189,12 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("豆包返回 HTTP %d：%s", resp.StatusCode, dbSnippet(raw))
 		}
+		// 豆包限流时会返回 HTTP 200 + **空响应体**（不是 429）。
+		// 早前这里直接当「无法识别」失败，用户点目录就遇到「进去是空的」。
+		if len(bytes.TrimSpace(raw)) == 0 {
+			lastErr = fmt.Errorf("豆包返回空响应（限流）")
+			continue
+		}
 		var out struct {
 			Code    int             `json:"code"`
 			Msg     string          `json:"msg"`
@@ -151,7 +202,7 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 			Data    json.RawMessage `json:"data"`
 		}
 		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil, fmt.Errorf("豆包返回无法识别：%s", dbSnippet(raw))
+			return nil, fmt.Errorf("豆包返回无法识别（HTTP %d，%d 字节）：%s", resp.StatusCode, len(raw), dbSnippet(raw))
 		}
 		if out.Code != 0 {
 			msg := out.Msg
