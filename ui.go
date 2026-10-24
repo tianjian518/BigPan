@@ -1548,7 +1548,7 @@ function dirShare(node){
   }
   return {provider:pv, share_id:sid, show:items[0].show||'', category:items[0].category||''};
 }
-function goPath(p){ CURPATH=p||[]; SEL=[]; paintLib(); }
+function goPath(p){ CURPATH=p||[]; SEL=[]; LIBPAGE=1; paintLib(); }
 function openLibPlayer(id){ openPlayer(id); }
 function loadLib(){
   syncLibQClr();
@@ -1615,6 +1615,15 @@ function renderLib(){
     $('libBox').innerHTML='<div class="empty"><div class="ei">'+svgFolder()+'</div><b>媒体库还是空的</b>先去「分享导入」粘贴一个分享链接</div>'; return;
   }
   if(VIEW==='grid'){ renderGrid(node,dirs,files); return; }
+  // 目录视图也分页：订阅号一键导入历史一次收几百条，全渲染会拉出几千米长页。
+  // 目录在前、文件在后，合成一条列表按 LIBPSIZE 切页。
+  var libRows=[];
+  dirs.forEach(function(name){ libRows.push({d:1,name:name}); });
+  files.forEach(function(it){ libRows.push({d:0,it:it}); });
+  var libTotal=libRows.length;
+  var libPages=Math.max(1,Math.ceil(libTotal/LIBPSIZE));
+  if(LIBPAGE>libPages)LIBPAGE=libPages;
+  var libView=libRows.slice((LIBPAGE-1)*LIBPSIZE, LIBPAGE*LIBPSIZE);
   var h='<table class="lvt"><thead><tr>'+
     '<th class="ckc"><input type="checkbox" id="ckAllLib" onchange="toggleAllLib(this.checked)"></th>'+
     '<th>名称</th>'+
@@ -1622,7 +1631,8 @@ function renderLib(){
     '<th style="width:150px;text-align:right">修改</th>'+
     '<th style="width:120px;text-align:right">操作</th>'+
     '</tr></thead><tbody>';
-  dirs.forEach(function(name){
+  libView.forEach(function(row){
+    if(row.d!==1){ var it=row.it;
     var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
     var si=dirShare(dn); // 单分享目录（剧名层）才给「分类」
     // 只有「这一层就是剧名」才给分类入口。豆包2 整盘只导入了一部剧时，
@@ -1640,8 +1650,9 @@ function renderLib(){
       '<td class="libtm">—</td>'+
       '<td class="ops"><span class="acts">'+ops+'</span></td>'+
       '</tr>';
-  });
-  files.forEach(function(it){
+      return;
+    }
+    var it=row.it;
     var vi=VIDEO_EXTS.test(it.ext||'');
     h+='<tr class="librow" data-type="file" data-ids="'+escA(JSON.stringify([it.id]))+'" data-name="'+escA(it.title)+'" data-cnt="1">'+
       '<td class="ckc"><input type="checkbox" class="ckL" onchange="updLibSel()"></td>'+
@@ -1651,7 +1662,7 @@ function renderLib(){
       '<td class="ops"><span class="acts">'+(vi?'<button class="mini" data-act="play">播放</button> ':'')+'<button class="mini danger" data-act="del">删除</button></span></td>'+
       '</tr>';
   });
-  h+='</tbody></table>';
+  if(libTotal>LIBPSIZE) h+=libPagerHtml(libTotal,LIBPAGE,LIBPSIZE,'goLibPage');
   $('libBox').innerHTML=h;
   bindLibRows();
 }
@@ -1676,16 +1687,28 @@ function renderFlat(hit){
   bindLibRows();
 }
 function renderGrid(node,dirs,files){
+  // 网格视图与列表视图共用一套分页：同样几百条不能一次全画。
+  var gRows=[];
+  dirs.forEach(function(name){ gRows.push({d:1,name:name}); });
+  files.forEach(function(it){ gRows.push({d:0,it:it}); });
+  var gTotal=gRows.length;
+  var gPages=Math.max(1,Math.ceil(gTotal/LIBPSIZE));
+  if(LIBPAGE>gPages)LIBPAGE=gPages;
+  var gView=gRows.slice((LIBPAGE-1)*LIBPSIZE, LIBPAGE*LIBPSIZE);
   var h='<div class="gridview">';
-  dirs.forEach(function(name){
-    var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
-    h+='<div class="gcard" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'">'+svgFolder()+'<div class="gn">'+esc(cleanShow(dirLabel(name)))+'</div><div class="gs">'+cnt+' 项</div></div>';
-  });
-  files.forEach(function(it){
+  gView.forEach(function(row){
+    if(row.d===1){
+      var name=row.name;
+      var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
+      h+='<div class="gcard" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'">'+svgFolder()+'<div class="gn">'+esc(cleanShow(dirLabel(name)))+'</div><div class="gs">'+cnt+' 项</div></div>';
+      return;
+    }
+    var it=row.it;
     var vi=VIDEO_EXTS.test(it.ext||'');
     h+='<div class="gcard" data-type="file" data-ids="'+escA(JSON.stringify([it.id]))+'" data-name="'+escA(it.title)+'" data-cnt="1">'+ (vi?svgVideo():svgDoc()) +'<div class="gn">'+esc(it.title)+'</div><div class="gs">'+humanSize(it.size||0)+'</div></div>';
   });
   h+='</div>';
+  if(gTotal>LIBPSIZE) h+=libPagerHtml(gTotal,LIBPAGE,LIBPSIZE,'goLibPage');
   $('libBox').innerHTML=h;
   var cards=document.querySelectorAll('#libBox .gcard');
   for(var i=0;i<cards.length;i++){
