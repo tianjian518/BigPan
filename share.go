@@ -526,13 +526,13 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			Provider string `json:"provider"`
-			Title    string `json:"title"`    // 分享（剧）名，入库的剧名目录
-			Category    string `json:"category"` // 分类（可选，可新建；空 = 不分类）
+			Provider    string `json:"provider"`
+			Title       string `json:"title"`        // 分享（剧）名，入库的剧名目录
+			Category    string `json:"category"`     // 分类（可选，可新建；空 = 不分类）
 			AutoRefresh *bool  `json:"auto_refresh"` // 导入后是否开启追更（默认开）
 			PwdID       string `json:"pwd_id"`
-			Passcode string `json:"passcode"`
-			Files    []struct {
+			Passcode    string `json:"passcode"`
+			Files       []struct {
 				ID   string `json:"id"`
 				Name string `json:"name"`
 				Path string `json:"path"`
@@ -591,18 +591,18 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 				title = strings.TrimSuffix(filepath.Base(f.Path), filepath.Ext(f.Path))
 			}
 			batch = append(batch, Item{
-				Title:    title,
-				Dir:      dir,
-				Category: category,
-				Show:     showFinal,
-				Provider: req.Provider,
-				ShareID:  req.PwdID,
-				Passcode: req.Passcode,
-				FileID:   f.ID,
-				FidToken: f.FidToken, // 夸克 TV 302 转存用（其他网盘为空）
+				Title:      title,
+				Dir:        dir,
+				Category:   category,
+				Show:       showFinal,
+				Provider:   req.Provider,
+				ShareID:    req.PwdID,
+				Passcode:   req.Passcode,
+				FileID:     f.ID,
+				FidToken:   f.FidToken,   // 夸克 TV 302 转存用（其他网盘为空）
 				ShareNumID: f.ShareNumID, // 天翼取链用（其他网盘为空）
-				Ext:      ext,
-				Size:     f.Size,
+				Ext:        ext,
+				Size:       f.Size,
 			})
 		}
 		// 一次落盘：导入几百集不再逐条重写 items.json
@@ -619,8 +619,8 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 			}
 			globalShares.Put(ShareMeta{
 				Provider: req.Provider, ShareID: req.PwdID, Passcode: req.Passcode,
-				Category: category,
-				Show:     show,
+				Category:    category,
+				Show:        show,
 				AutoRefresh: ar,
 			})
 		}
@@ -810,7 +810,8 @@ var refreshMu sync.Mutex
 // 分类/剧名沿用已入库条目的值（用户手工改过名、设过分类都保留）；
 // 显式传入的 category 优先。passcode 为空表示无提取码分享。
 func refreshShareOnce(store *Store, provider, shareID, passcode, category string) (show string, added, total int, err error) {
-	updated := 0 // 同名同路径但 file_id 变了（分享主重传），就地更新
+	updated := 0     // 同名同路径但 file_id 变了（分享主重传），就地更新
+	renamed := 0     // 同 token 但名字/位置变了（分享主改名/挪位），原地改名
 	var batch []Item // 新条目攒一批，循环结束后一次性入库（理由见循环末尾）
 	p := providerByName(provider)
 	if p == nil {
@@ -824,6 +825,10 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 	// 路径稳定，播放器缓存才不会失效。显式传入的 category 优先。
 	cat := strings.TrimSpace(category)
 	existTitles := map[string]bool{} // 同剧下已有的「集名」，用于防重复
+	// token 索引：同一个文件的 token（FileID/FidToken）在改名、挪位置时不变。
+	// 刷新时按 token 对上旧条目 → 原地改名/改路径，而不是新增一条重复。
+	tokByID := map[string]*Item{}
+	tokByFid := map[string]*Item{}
 	for _, it := range store.List() {
 		if it.Provider == provider && it.ShareID == shareID && it.Dir != "" {
 			if it.Show != "" && show == "" {
@@ -833,6 +838,14 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 				}
 			}
 			existTitles[it.Title] = true
+			if it.FileID != "" {
+				c := it
+				tokByID[it.FileID] = &c
+			}
+			if it.FidToken != "" {
+				c := it
+				tokByFid[it.FidToken] = &c
+			}
 		}
 	}
 	if show == "" {
@@ -871,6 +884,38 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 		// 作废的旧 ID —— 播放取链返回「资源不存在」，而巡检探测的是「分享还在
 		// 不在」，分享活着所以也不会清理。结果是这条永久 502、谁都不管
 		// （移动「璀璨之城」就是典型）。
+		// 【token 对账】分享主改名/挪位置：token 不变、名字变了 →
+		// 原地更新旧条目（Title/Dir），绝不新增重复条目。
+		// 改名前后的文件 token 相同，旧条目还能播、巡检也不会清它，
+		// 不对账就会永远留着一条旧名字的"僵尸副本"。
+		var matched *Item
+		if old := tokByID[f.ID]; old != nil {
+			matched = old
+		} else if f.FidToken != "" {
+			matched = tokByFid[f.FidToken]
+		}
+		if matched != nil && (matched.Title != name || matched.Dir != dir) {
+			// 目录用条目自己的分类/剧名重建，用户手工改过的分类不被冲掉
+			newDir := buildItemDir(provider, matched.Category, matched.Show, stripShareRoot(f.Path, refreshRoot))
+			oldTitle := matched.Title
+			store.Update(matched.ID, func(x *Item) {
+				x.Title = name
+				x.Dir = newDir
+				if ext != "" {
+					x.Ext = ext
+				}
+				if f.Size > 0 {
+					x.Size = f.Size
+				}
+				if f.FidToken != "" {
+					x.FidToken = f.FidToken
+				}
+			})
+			renamed++
+			existTitles[name] = true
+			log.Printf("[追更] %s/%s 文件改名/挪位，原地更新：%s → %s", provider, show, oldTitle, name)
+			continue
+		}
 		if it := store.FindByPath(full); it != nil {
 			if it.FileID != f.ID {
 				oldID := it.FileID
@@ -916,7 +961,10 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 	if len(batch) > 0 {
 		store.AddBatch(batch)
 	}
-	if updated > 0 {
+	if renamed > 0 {
+		log.Printf("[追更] %s/%s 重扫 %d 个视频，新增 %d 个，改名/挪位跟随 %d 个，同步取链标识 %d 个",
+			provider, show, total, added, renamed, updated)
+	} else if updated > 0 {
 		log.Printf("[追更] %s/%s 重扫 %d 个视频，新增 %d 个，同步取链标识 %d 个", provider, show, total, added, updated)
 	} else {
 		log.Printf("[追更] %s/%s 重扫 %d 个视频，新增 %d 个", provider, show, total, added)
