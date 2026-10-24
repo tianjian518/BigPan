@@ -18,9 +18,9 @@ func TestParseDoubaoLink(t *testing.T) {
 			t.Fatalf("%q → %q, %v", c.in, id, err)
 		}
 	}
-	// 新格式必须给出可读的拒绝理由，不能静默失败
-	if _, err := parseDoubaoLink("https://www.doubao.com/drive/shr/UE3vfZo2Tl81AvdaG5Nc269onrg"); err == nil {
-		t.Fatal("新格式 /drive/shr/ 应当报错")
+	// 新格式（/drive/shr/）解析为 shr: 前缀，交给 v2 链路
+	if sid, err := parseDoubaoLink("https://www.doubao.com/drive/shr/UE3vfZo2Tl81AvdaG5Nc269onrg"); err != nil || sid != "shr:UE3vfZo2Tl81AvdaG5Nc269onrg" {
+		t.Fatalf("新格式应解析为 shr: 前缀，实际 %q err=%v", sid, err)
 	}
 	if _, err := parseDoubaoLink("https://pan.quark.cn/s/xxxx"); err == nil {
 		t.Fatal("夸克链接不该被当成豆包")

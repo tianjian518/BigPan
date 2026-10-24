@@ -29,7 +29,7 @@ type Item struct {
 	// Category 用户自定义分类（如 国产剧/欧美剧/华语电影/动画电影），可空。
 	Category string `json:"category,omitempty"`
 	// Show 剧名（用户可改）。追更刷新时靠它定位目录，保证路径稳定。
-	Show string `json:"show,omitempty"`
+	Show     string `json:"show,omitempty"`
 	ShareID  string `json:"share_id,omitempty"` // 分享标识
 	Passcode string `json:"passcode,omitempty"` // 提取码
 	FileID   string `json:"file_id,omitempty"`  // 分享内文件 ID

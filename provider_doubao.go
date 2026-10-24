@@ -75,17 +75,24 @@ func doubaoTag(cookie string) string {
 // doubaoShareRe 老格式分享：/drive/s/{16位hex}
 var doubaoShareRe = regexp.MustCompile(`(?i)doubao\.com/drive/s/([A-Za-z0-9]{8,40})`)
 
-// doubaoShrRe 新格式分享：/drive/shr/{27位}，属飞书体系，暂不支持。
+// doubaoShrRe 新格式分享：/drive/shr/{27位token}（飞书体系）。
+// 2026-10-24 实测：shr 的 token 就是飞书 node_token，分享页走
+// permission/setting.v2 + children/list?token=xxx 解析，播放同新链路 302。
 var doubaoShrRe = regexp.MustCompile(`(?i)doubao\.com/drive/shr/([A-Za-z0-9]+)`)
 
+// doubaoShrPrefix 标记「新格式分享」。占住 ShareID 字段当唯一键，
+// shareURL / RefreshShare 据此区分新旧两种分享。
+const doubaoShrPrefix = "shr:"
+
 // parseDoubaoLink 解析豆包分享链接，返回 share_id。
+// 老格式（/drive/s/）返回 16 位 hex；新格式（/drive/shr/）返回 "shr:"+token。
 func parseDoubaoLink(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", fmt.Errorf("请粘贴分享链接")
 	}
-	if doubaoShrRe.MatchString(raw) {
-		return "", fmt.Errorf("这是豆包新格式分享（/drive/shr/），暂不支持；自己的文件请用 doubao:// 方式浏览")
+	if m := doubaoShrRe.FindStringSubmatch(raw); m != nil {
+		return doubaoShrPrefix + m[1], nil
 	}
 	if m := doubaoShareRe.FindStringSubmatch(raw); m != nil {
 		return m[1], nil
@@ -168,6 +175,19 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 	if err != nil {
 		return ShareInfo{}, err
 	}
+	// B2. 新格式分享（/drive/shr/）：走 v2 链路，children/list?token= 直接列
+	if strings.HasPrefix(shareID, doubaoShrPrefix) {
+		tok := strings.TrimPrefix(shareID, doubaoShrPrefix)
+		title, files, err := scanDoubaoShr(cli, p.Name(), tok)
+		if err != nil {
+			return ShareInfo{}, err
+		}
+		return ShareInfo{
+			Provider: p.Name(), Title: title,
+			ShareID: shareID,
+			Files:   files, Logged: true,
+		}, nil
+	}
 	title, files, err := scanDoubaoShare(cli, p.Name(), shareID)
 	if err != nil {
 		return ShareInfo{}, err
@@ -182,6 +202,14 @@ func (p doubaoProvider) RefreshShare(shareID, passcode string) (string, []ShareF
 	}
 	if shareID == "" || doubaoIsNodeID(shareID) {
 		return "", nil, fmt.Errorf("自己盘里的条目不参与追更，重新导入即可")
+	}
+	if strings.HasPrefix(shareID, doubaoShrPrefix) {
+		tok := strings.TrimPrefix(shareID, doubaoShrPrefix)
+		title, files, err := scanDoubaoShr(cli, p.Name(), tok)
+		if err != nil {
+			return "", nil, err
+		}
+		return title, files, nil
 	}
 	return scanDoubaoShare(cli, p.Name(), shareID)
 }
@@ -360,6 +388,21 @@ func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile,
 		return "", nil, fmt.Errorf("这个目录里没有视频文件")
 	}
 	return title, files, nil
+}
+
+// scanDoubaoShr 扫描新格式分享（/drive/shr/）。
+//
+// 2026-10-24 实测：shr 的 27 位 token 就是飞书 node_token，分享内容的
+// 列取和自己盘完全同一个接口（children/list?token=xxx），权限由服务端
+// 按「链接可见」判定 —— 所以扫描逻辑直接复用 scanDoubaoOwn，
+// 只有标题来源不同：用 obj/path 接口拿分享根的名字。
+func scanDoubaoShr(cli *Doubao, slot, token string) (string, []ShareFile, error) {
+	hint, err := cli.dbnNodeName(token)
+	if err != nil {
+		log.Printf("[豆包v2] 取分享名失败（不影响导入）：%v", err)
+		hint = ""
+	}
+	return scanDoubaoOwn(cli, slot, token, hint)
 }
 
 // scanDoubaoShare 递归扫描别人的分享目录树。规则同自己的盘：失败即停、断点续传。

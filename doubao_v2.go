@@ -452,6 +452,62 @@ func dbnToOldNode(n dbnNode) dbNode {
 	return dbNode{ID: n.NodeToken, Name: n.Name, NodeType: nt, Size: size, Key: n.ObjToken}
 }
 
+// dbnNodeName 取一个节点（含别人分享的根）的名字。
+// 浏览器分享页第二跳 GET /space/api/explorer/v2/obj/path/?obj_token=xx&need_path=true
+// 返回 data.entities.nodes[token].name；失败不影响主流程。
+func (d *Doubao) dbnNodeName(token string) (string, error) {
+	tok, err := d.dbnEnsureToken()
+	if err != nil {
+		return "", err
+	}
+	htu := dbnBase + "/space/api/explorer/v2/obj/path/"
+	proof, err := d.dbnSignDPoP(http.MethodGet, htu)
+	if err != nil {
+		return "", err
+	}
+	u := htu + "?obj_token=" + url.QueryEscape(token) + "&obj_type=0&need_path=true"
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("accept", "application/json, text/plain, */*")
+	req.Header.Set("origin", "https://www.doubao.com")
+	req.Header.Set("referer", "https://www.doubao.com/")
+	req.Header.Set("user-agent", doubaoUA)
+	req.Header.Set("cookie", d.cookie)
+	req.Header.Set("authorization", "Bearer "+tok)
+	req.Header.Set("dpop", proof)
+	resp, err := d.hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(bytes.TrimSpace(raw)) == 0 {
+		return "", fmt.Errorf("obj/path HTTP %d", resp.StatusCode)
+	}
+	var out struct {
+		Code int `json:"code"`
+		Data struct {
+			Entities struct {
+				Nodes map[string]struct {
+					Name string `json:"name"`
+				} `json:"nodes"`
+			} `json:"entities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", err
+	}
+	if out.Code != 0 {
+		return "", fmt.Errorf("obj/path code %d", out.Code)
+	}
+	if n, ok := out.Data.Entities.Nodes[token]; ok {
+		return strings.TrimSpace(n.Name), nil
+	}
+	return "", fmt.Errorf("obj/path 无此节点")
+}
+
 type dbnFileInfo struct {
 	Version string `json:"version"`
 }
