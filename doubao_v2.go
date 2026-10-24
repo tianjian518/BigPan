@@ -507,6 +507,11 @@ func (d *Doubao) dbnFileInfo(fileToken string) (dbnFileInfo, error) {
 }
 
 // dbnDownloadURL 拼播放直链：鉴权放在 query 里，302 后播放器无需任何特殊头。
+//
+// 两个缺一不可的细节（实测）：
+//  1. token 必须是 biz_auth 刷新后的（Cookie 里的原始 LARK token 放 query 是 401）
+//  2. 值必须带 "DPoP " 前缀（裸 token 和 "Bearer " 前缀都是 401，
+//     对应 OpenList resolveAuthorization() 的返回格式 "DPoP "+token）
 func (d *Doubao) dbnDownloadURL(objToken string) (string, error) {
 	tok, err := d.dbnEnsureToken()
 	if err != nil {
@@ -517,7 +522,7 @@ func (d *Doubao) dbnDownloadURL(objToken string) (string, error) {
 		return "", err
 	}
 	q := url.Values{}
-	q.Set("authorization", tok)
+	q.Set("authorization", "DPoP "+tok)
 	q.Set("dpop", proof)
 	return dbnDownload + "/space/api/box/stream/download/all/" + objToken + "/?" + q.Encode(), nil
 }

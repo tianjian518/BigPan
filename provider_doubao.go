@@ -194,8 +194,12 @@ func (p doubaoProvider) ResolvePlay(item *Item) (PlayTarget, error) {
 	// 新链路条目：FileID 是飞书 node_token（字母串），FidToken 存 obj_token。
 	// 播放直链把鉴权放在 query 里，302 后播放器无需任何特殊头。
 	if !dbIsOldNodeID(item.FileID) && cli.v2Key != nil && item.FidToken != "" {
-		// 本机转发地址（新链路下载必须带鉴权头，无法 302 直连）
-		return PlayTarget{URL: dbv2PlayURL(item.FidToken)}, nil
+		// 新链路 302 直链：鉴权在 query 里（token 用 biz_auth 刷新后的 + DPoP 前缀）
+		u, err := cli.dbnDownloadURL(item.FidToken)
+		if err == nil && u != "" {
+			return PlayTarget{URL: u}, nil
+		}
+		log.Printf("[豆包v2] 新链路取链失败，降级老链路：%v", err)
 	}
 	// 老链路条目：FileID 是纯数字 node_id；item.ShareID 非空且不是 node: 前缀
 	// 才表示来自分享，取链要带 share_id。

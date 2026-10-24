@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -119,32 +120,19 @@ func TestDoubaoV2Live(t *testing.T) {
 	}
 	t.Logf("④ 视频：%s（%d 字节）", file.Name, file.Size)
 
-	// ⑤ 播放路由：新条目 ResolvePlay 应返回 /dbplay 本机转发地址
-	old := globalAccounts
-	defer func() { globalAccounts = old }()
-	as, err := makeTestAccounts(ck)
+	// ⑤ 302 直链裸拉（不带任何头，模拟播放器跟随 302）
+	u, err := cli.dbnDownloadURL(file.Key)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("⑤ 拼直链失败：%v", err)
 	}
-	globalAccounts = as
-	p := doubaoProvider{slot: 1}
-	it := &Item{Provider: "doubao1", FileID: file.ID, FidToken: file.Key, Show: file.Name, Title: file.Name}
-	pt, err := p.ResolvePlay(it)
+	resp, err := http.Get(u)
 	if err != nil {
-		t.Fatalf("⑤ ResolvePlay 失败：%v", err)
+		t.Fatalf("⑤ 直链请求失败：%v", err)
 	}
-	if !strings.HasPrefix(pt.URL, "/dbplay/") {
-		t.Fatalf("⑤ 新条目应返回 /dbplay 地址，实际 %q", pt.URL)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 206 {
+		t.Fatalf("⑤ 直链 HTTP %d（期望 200/206）", resp.StatusCode)
 	}
-	t.Logf("⑤ 播放地址：%s", pt.URL)
-	t.Log("⑥（/dbplay 转发的 HTTP 层验证在部署后用 curl 做）")
-}
-
-func makeTestAccounts(ck string) (*AccountStore, error) {
-	as, err := NewAccountStore("/tmp/dbv2-test-accounts.json")
-	if err != nil {
-		return nil, err
-	}
-	as.Put(Account{Provider: "doubao1", Cookie: ck})
-	return as, nil
+	ct := resp.Header.Get("Content-Type")
+	t.Logf("⑤ 302 直链裸拉 OK：HTTP %d CT=%s CL=%s", resp.StatusCode, ct, resp.Header.Get("Content-Length"))
 }
