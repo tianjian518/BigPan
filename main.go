@@ -512,6 +512,107 @@ func apiLink(store *Store) http.HandlerFunc {
 	}
 }
 
+// ---- 豆包新链路播放端点 ----
+//
+// 新链路（feishu drive）的下载必须带 Authorization/Dpop/Cookie 头，
+// 没法像老链路那样 302 给播放器直连，所以走本机转发。
+// Range 头原样透传，视频拖动不受影响。
+
+func dbv2Guard(as *AccountStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		objToken := strings.TrimPrefix(r.URL.Path, "/dbplay/")
+		if dec, err := url.PathUnescape(objToken); err == nil {
+			objToken = dec
+		}
+		if objToken == "" {
+			http.Error(w, "缺少 objToken", http.StatusBadRequest)
+			return
+		}
+		// STRM 令牌（和 /direct 同一套）：媒体服务器拿到的地址不带 Basic Auth
+		strmOK := (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			r.URL.Query().Get("k") == strmPathToken("/dbplay/"+objToken)
+		if !authed(r) && !strmOK {
+			w.Header().Set("WWW-Authenticate", `Basic realm="BigPan"`)
+			http.Error(w, "需要登录", http.StatusUnauthorized)
+			return
+		}
+		var cli *Doubao
+		for i := 1; i <= doubaoSlots; i++ {
+			if c := (doubaoProvider{slot: i}).client(as); c != nil && c.v2Key != nil {
+				cli = c
+				break
+			}
+		}
+		if cli == nil {
+			http.Error(w, "豆包 v2 未就绪（Cookie 里缺 LARK_SUITE_ACCESS_TOKEN 或 feishu_dpop_keypair）", http.StatusServiceUnavailable)
+			return
+		}
+		dbv2Proxy(w, r, cli, objToken, 0)
+	}
+}
+
+func dbv2Proxy(w http.ResponseWriter, r *http.Request, cli *Doubao, objToken string, attempt int) {
+	tok, err := cli.dbnEnsureToken()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	u := dbnDownload + "/space/api/box/stream/download/all/" + objToken + "/"
+	proof, err := cli.dbnSignDPoP(http.MethodGet, u)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("accept", "*/*")
+	req.Header.Set("origin", "https://www.doubao.com")
+	req.Header.Set("referer", "https://www.doubao.com/")
+	req.Header.Set("user-agent", doubaoUA)
+	req.Header.Set("cookie", cli.cookie)
+	req.Header.Set("authorization", "Bearer "+tok)
+	req.Header.Set("dpop", proof)
+	if rg := r.Header.Get("Range"); rg != "" {
+		req.Header.Set("Range", rg)
+	}
+	resp, err := cli.hc.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	// token 失效 → 刷新一次再试（DPoP proof 15 秒有效，重签即可）
+	if resp.StatusCode == http.StatusUnauthorized && attempt == 0 {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		if rerr := cli.dbnRefreshAuthorization(); rerr == nil {
+			dbv2Proxy(w, r, cli, objToken, 1)
+			return
+		}
+	}
+	defer resp.Body.Close()
+	h := w.Header()
+	for _, k := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"} {
+		if v := resp.Header.Get(k); v != "" {
+			h.Set(k, v)
+		}
+	}
+	if h.Get("Accept-Ranges") == "" {
+		h.Set("Accept-Ranges", "bytes")
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// dbv2PlayURL 豆包新条目的本机播放地址（带 STRM 令牌）。
+func dbv2PlayURL(objToken string) string {
+	v := url.Values{}
+	v.Set("k", strmPathToken("/dbplay/"+objToken))
+	return "/dbplay/" + url.PathEscape(objToken) + "?" + v.Encode()
+}
+
 // truncUA 截断 UA，日志里能认出客户端就行。
 func truncUA(ua string) string {
 	if len(ua) > 48 {
@@ -591,6 +692,12 @@ func directGuard(store *Store) http.Handler {
 					// 少了这个 k，/play 的鉴权会把 legacy 中转路 401 掉。
 					v.Set("k", strmPathToken("/play/"+it.FileName()))
 					http.Redirect(w, r, "/play/"+url.PathEscape(it.FileName())+"?"+v.Encode(), http.StatusFound)
+					return
+				}
+				// 豆包新链路条目（飞书 token）：下载必须带鉴权头，无法 302
+				// 给播放器直连 → 跳本机 /dbplay 转发（支持 Range）。
+				if strings.HasPrefix(it.Provider, "doubao") && !dbIsOldNodeID(it.FileID) && it.FidToken != "" {
+					http.Redirect(w, r, dbv2PlayURL(it.FidToken), http.StatusFound)
 					return
 				}
 				// 诊断：记录客户端真实特征（定位「网页版播放器卡顿」用）
@@ -1657,6 +1764,7 @@ func main() {
 	mux.HandleFunc("/api/accounts/import", requireAuth(apiAccountImport(as)))
 	mux.HandleFunc("/api/accounts/label", requireAuth(apiAccountLabel(as)))
 	mux.HandleFunc("/api/doubao/browse", requireAuth(apiDoubaoBrowse(as)))
+	mux.Handle("/dbplay/", dbv2Guard(as))
 	mux.HandleFunc("/api/accounts", requireAuth(apiAccounts(as)))
 	mux.HandleFunc("/api/accounts/", requireAuth(apiAccounts(as)))
 	mux.Handle("/dav/", davGuard(dav, store, self))

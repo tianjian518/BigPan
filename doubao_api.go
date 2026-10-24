@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +27,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"log"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +89,13 @@ type Doubao struct {
 	ips  []string // 最近一次解析到的出口 IP，用来判断「是不是全都冷却了」
 
 	base string // 仅测试用：把请求打到 mock 服务器
+
+	// v2 新链路（feishu drive + DPoP）
+	v2Key     *ecdsa.PrivateKey
+	v2Token   string    // LARK_SUITE_ACCESS_TOKEN / biz_auth 换来的新 token
+	v2TokenAt time.Time // v2Token 的写入时间，用于判断何时刷新
+	v2CSRF    string    // biz_auth 刷新要带的 csrf
+	v2Mu      sync.Mutex
 }
 
 // endpoint 拼出接口地址。base 为空时走线上域名。
@@ -247,9 +257,43 @@ func (d *Doubao) setIPs(v4, v6 []string) {
 // 全部冷却时直接返回 dbThrottleErr，不去撞无谓的请求。
 func newDoubao(cookie string) *Doubao { return newDoubaoAt(cookie, "") }
 
+// initV2 从 Cookie 里提取新链路的凭证。缺哪样都不影响老链路，只是降级。
+func (d *Doubao) initV2() {
+	get := func(k string) string {
+		for _, kv := range strings.Split(d.cookie, ";") {
+			kk, vv, ok := strings.Cut(strings.TrimSpace(kv), "=")
+			if !ok || strings.TrimSpace(kk) != k {
+				continue
+			}
+			// 注意：必须用 PathUnescape。QueryUnescape 会把 base64 里的
+			// 「+」解成空格，keypair 直接解不出来。
+			v, err := url.PathUnescape(strings.TrimSpace(vv))
+			if err != nil {
+				v = strings.TrimSpace(vv)
+			}
+			return v
+		}
+		return ""
+	}
+	d.v2Token = get("LARK_SUITE_ACCESS_TOKEN")
+	d.v2CSRF = get("passport_csrf_token")
+	kp := get("feishu_dpop_keypair")
+	if kp == "" || d.v2Token == "" {
+		return
+	}
+	sk, err := decryptDPoPKeyPair(kp, dbnSecret)
+	if err != nil {
+		log.Printf("[豆包v2] keypair 解密失败，沿用老链路：%v", err)
+		return
+	}
+	d.v2Key = sk
+	log.Printf("[豆包v2] 新链路就绪（DPoP 私钥已解密，token 自动续期可用）")
+}
+
 // newDoubaoAt 同 newDoubao，但可以把请求打到指定 base（测试用）。
 func newDoubaoAt(cookie, base string) *Doubao {
 	d := &Doubao{cookie: strings.TrimSpace(cookie), base: base}
+	d.initV2()
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	tr := &http.Transport{
 		ForceAttemptHTTP2:   true,
@@ -531,8 +575,49 @@ func (d *Doubao) dbUserInfo() (name, mobile string, err error) {
 
 // ---- 自己的盘 ----
 
+// dbIsOldNodeID 新链路的节点 token 是飞书字母串，老的 node_id 是纯数字。
+// 据此路由：老条目继续走老链路（sessionid），新条目走 DPoP。
+func dbIsOldNodeID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, c := range id {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *Doubao) dbnToList(nodeID string) ([]dbNode, error) {
+	nodes, err := d.dbnListChildren(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dbNode, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, dbnToOldNode(n))
+	}
+	return out, nil
+}
+
 // dbHome 列根目录，返回根节点 ID 与顶层条目。
 func (d *Doubao) dbHome() (rootID string, children []dbNode, err error) {
+	if d.v2Key != nil {
+		if ch, e := d.dbnToList(""); e == nil {
+			// 飞书根里混着几百个飞书文档（豆包文件和文档同一空间），
+			// 浏览根只保留文件夹，豆包的顶层目录（Via/天剑豆包影视…）全在里面
+			out := ch[:0]
+			for _, n := range ch {
+				if n.IsDir() && n.Name != "" {
+					out = append(out, n)
+				}
+			}
+			return "", out, nil
+		} else {
+			log.Printf("[豆包v2] 列根目录失败，降级老链路：%v", e)
+		}
+	}
 	data, err := d.post("/samantha/aispace/homepage", map[string]any{})
 	if err != nil {
 		return "", nil, err
@@ -556,6 +641,13 @@ type dbPage struct {
 
 // dbListDir 列自己盘某个目录（单页）。
 func (d *Doubao) dbListDir(nodeID string) ([]dbNode, error) {
+	if d.v2Key != nil {
+		if ch, e := d.dbnToList(nodeID); e == nil {
+			return ch, nil
+		} else {
+			log.Printf("[豆包v2] 列目录失败，降级老链路：%v", e)
+		}
+	}
 	return d.dbListDirPage(nodeID, "")
 }
 
@@ -582,6 +674,13 @@ func (d *Doubao) dbListDirPage(nodeID, cursor string) ([]dbNode, error) {
 // 那正是之前「扫描少了几千个文件」的元凶之一：前几页正常、第 4 页被风控，
 // 代码 break 后把前 3 页交出去，看起来一切正常但少了 90% 的内容。
 func (d *Doubao) dbListDirAll(nodeID string) ([]dbNode, error) {
+	if d.v2Key != nil {
+		if ch, e := d.dbnToList(nodeID); e == nil {
+			return ch, nil
+		} else {
+			log.Printf("[豆包v2] 列目录失败，降级老链路：%v", e)
+		}
+	}
 	var all []dbNode
 	cursor := ""
 	for page := 0; page < 200; page++ {

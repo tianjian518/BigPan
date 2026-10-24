@@ -191,8 +191,14 @@ func (p doubaoProvider) ResolvePlay(item *Item) (PlayTarget, error) {
 	if cli == nil {
 		return PlayTarget{}, fmt.Errorf("%s 还没粘 Cookie", providerCN(p.Name()))
 	}
-	// item.FileID 存 node_id；item.FidToken 存豆包的 key（多数文件为空串）；
-	// item.ShareID 非空且不是 node: 前缀，才表示来自分享，取链要带 share_id。
+	// 新链路条目：FileID 是飞书 node_token（字母串），FidToken 存 obj_token。
+	// 播放直链把鉴权放在 query 里，302 后播放器无需任何特殊头。
+	if !dbIsOldNodeID(item.FileID) && cli.v2Key != nil && item.FidToken != "" {
+		// 本机转发地址（新链路下载必须带鉴权头，无法 302 直连）
+		return PlayTarget{URL: dbv2PlayURL(item.FidToken)}, nil
+	}
+	// 老链路条目：FileID 是纯数字 node_id；item.ShareID 非空且不是 node: 前缀
+	// 才表示来自分享，取链要带 share_id。
 	sid := item.ShareID
 	if doubaoIsNodeID(sid) {
 		sid = "" // 自己盘的文件不能带 share_id，否则接口报参数错误
