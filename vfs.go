@@ -55,6 +55,35 @@ var filenameReplacer = strings.NewReplacer(
 	"#", "_", "&", "_", "%", "_",
 )
 
+// cleanShareTitle 清洗分享标题里的符号污染：emoji、装饰符号、零宽字符等。
+//
+// 来源：资源号标题爱堆 emoji（✨❄️⭐⛄…），文件系统本身收得了，
+// 但 Emby/Jellyfin 刮削器认不了这种目录名，整部剧变"未识别"。
+// 保留：中英文、数字、常用中英文标点、空格；其余符号段整体剥掉。
+func cleanShareTitle(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 0x20 && r < 0x2000: // 可打印字符：ASCII + 拉丁 + 一般标点区（控制字符 <0x20 直接丢）
+			b.WriteRune(r)
+		case r >= 0x200A && r <= 0x200F, // 零宽空格/连接符、双向控制符
+			r >= 0x2028 && r <= 0x202F, // 行/段分隔符、嵌入控制符
+			r == 0x205F, r == 0x2060, r == 0xFEFF: // 数学空格、词连接符、BOM
+			// 零宽字符整体丢掉：留着会让文件名多出看不见的字符
+		case r >= 0x3000 && r <= 0x9FFF: // CJK 标点、平假名、片假名、汉字
+			b.WriteRune(r)
+		case r >= 0xFF00 && r <= 0xFFEF: // 全角符号、全角字母数字
+			b.WriteRune(r)
+		case r >= 0x2000 && r <= 0x206F: // 通用标点（– — ' " …）
+			b.WriteRune(r)
+		default:
+			// emoji / 装饰符号（1F000+、2600-27BF、2B00 段等）、变体选择器
+			// （FE0F）——全部丢弃
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func safeFilename(s string) string {
 	s = filenameReplacer.Replace(strings.TrimSpace(s))
 	// 【防路径穿越】整个名字恰好是 "." 或 ".." 时，filepath.Join 会向上跳一级：

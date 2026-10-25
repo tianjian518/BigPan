@@ -33,9 +33,9 @@ var tianyiSubs *tianyiSubStore
 type tianyiSubEntry struct {
 	UserID     string    `json:"user_id"`
 	Name       string    `json:"name"`
-	Category   string    `json:"category,omitempty"`    // 收录到哪个分类（可空）
-	AutoImport bool      `json:"auto_import"`           // 新分享自动收录
-	Watermark  string    `json:"watermark,omitempty"`   // 只收 ShareDate 晚于它的分享
+	Category   string    `json:"category,omitempty"`  // 收录到哪个分类（可空）
+	AutoImport bool      `json:"auto_import"`         // 新分享自动收录
+	Watermark  string    `json:"watermark,omitempty"` // 只收 ShareDate 晚于它的分享
 	AddedAt    time.Time `json:"added_at"`
 	LastSync   time.Time `json:"last_sync,omitempty"`
 	LastError  string    `json:"last_error,omitempty"`
@@ -47,9 +47,10 @@ type tianyiSubEntry struct {
 
 // doneCap 是 Done 断点 map 的硬上限（条）。超过后不再记录「导入成功」的
 // shareId —— 这类记录本来就是冗余的：
-//  ① 导入成功的分享都在 items.json 里，下次一键导入开头的「断点预热」
-//     会从库里重新推导一遍（见 tianyiBackfillRun）；
-//  ② store.AddBatch 按 FullPath 去重，万一重扫到也只是覆盖，不会重复收录。
+//
+//	① 导入成功的分享都在 items.json 里，下次一键导入开头的「断点预热」
+//	   会从库里重新推导一遍（见 tianyiBackfillRun）；
+//	② store.AddBatch 按 FullPath 去重，万一重扫到也只是覆盖，不会重复收录。
 //
 // 真正不能丢的只有「没有视频文件」这类永久失败标记（量极小，始终记录）。
 // 正常订阅号几百上千条分享，离这个上限很远；只有异常庞大的号才会触发，
@@ -151,9 +152,10 @@ var tianyiSubUUIDRe = regexp.MustCompile(`([0-9a-f]{32})`)
 
 // parseTianyiSubscribe 从「订阅号链接 / 裸 userId」里提取 userId。
 // 支持：
-//   https://content.21cn.com/h5/subscrip/index.html#/pages/own-home/index?uuid=xxxx
-//   https://h5.cloud.189.cn/...?userId=xxxx
-//   直接粘贴 32 位 userId
+//
+//	https://content.21cn.com/h5/subscrip/index.html#/pages/own-home/index?uuid=xxxx
+//	https://h5.cloud.189.cn/...?userId=xxxx
+//	直接粘贴 32 位 userId
 func parseTianyiSubscribe(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -192,7 +194,11 @@ func tianyiSubNormalizeWM(wm string) string {
 
 // tianyiSubImportOne 收录订阅号里的一条分享（扫描目录树 → 写条目）。
 // 返回写入的条目数；同一分享重复收录会按路径覆盖，不会产生重复。
-func tianyiSubImportOne(store *Store, self string, e tianyiSubEntry, s tianyiSubShare) (int, error) {
+//
+// showOverride 非空 = 收录时用户自定义了剧名（资源号原标题带 emoji 时改个
+// 干净名字）。此时会先把这部剧已入库的旧条目清掉再重写 —— AddBatch 只按
+// FullPath 去重，换了名字路径就不同，不清旧条目会新旧两个名字各留一份。
+func tianyiSubImportOne(store *Store, self string, e tianyiSubEntry, s tianyiSubShare, showOverride string) (int, error) {
 	cred := tianyiCredOf(globalAccounts)
 	title, files, err := tianyiSubWalk(cred, s)
 	if err != nil {
@@ -202,15 +208,34 @@ func tianyiSubImportOne(store *Store, self string, e tianyiSubEntry, s tianyiSub
 	if err != nil {
 		return 0, err
 	}
-	showRaw := strings.TrimSpace(title)
+	showRaw := strings.TrimSpace(showOverride)
+	if showRaw == "" {
+		showRaw = strings.TrimSpace(title)
+	}
 	if showRaw == "" {
 		showRaw = s.Name
 	}
+	// 资源号标题爱堆 emoji（✨❄️⭐…），Emby 刮削器认不了 → 收录时统一清洗
+	showRaw = cleanShareTitle(showRaw)
 	showFinal := safeFilename(stripScrape(showRaw))
 	if showFinal == "" {
 		showFinal = "未命名"
 	}
 	numID := fmt.Sprintf("%d", s.ShareId)
+	// 自定义剧名重收：清掉这部剧名不同的旧条目，避免媒体库里出现
+	// 「❄️国产剧」和「国产剧」两份（旧条目路径不变还能播，但谁也不想要）。
+	if showOverride != "" {
+		var stale []string
+		for _, it := range store.List() {
+			if it.Provider == "tianyi" && it.ShareID == numID && it.Show != showFinal {
+				stale = append(stale, it.ID)
+			}
+		}
+		if len(stale) > 0 {
+			store.DeleteBatch(stale)
+			log.Printf("[订阅号] %s 自定义剧名 %q，清掉 %d 个旧条目", numID, showFinal, len(stale))
+		}
+	}
 	// 订阅导入与手动导入同规则：剥掉分享顶层容器（多顶层不剥）。
 	subPaths := make([]string, 0, len(files))
 	for _, f := range files {
@@ -302,7 +327,7 @@ func tianyiSubSyncOne(store *Store, subs *tianyiSubStore, self, userID string) (
 	for _, s := range newShares {
 		if e.AutoImport {
 			// self 传空 = 不逐条重建 STRM，整轮结束后重建一次（避免 N 次全量重建）
-			if _, err := tianyiSubImportOne(store, "", *e, s); err == nil {
+			if _, err := tianyiSubImportOne(store, "", *e, s, ""); err == nil {
 				imported++
 			}
 		}
@@ -511,6 +536,7 @@ func apiTianyiSubImport(store *Store, subs *tianyiSubStore, self string) http.Ha
 		var req struct {
 			UserID  string `json:"user_id"`
 			ShareID int64  `json:"share_id"`
+			Show    string `json:"show"` // 可选：自定义剧名（原标题带 emoji 时改个干净的）
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" || req.ShareID == 0 {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "参数不合法"})
@@ -526,7 +552,7 @@ func apiTianyiSubImport(store *Store, subs *tianyiSubStore, self string) http.Ha
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
 		}
-		n, err := tianyiSubImportOne(store, self, *e, *s)
+		n, err := tianyiSubImportOne(store, self, *e, *s, req.Show)
 		if err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 			return
@@ -741,7 +767,7 @@ func tianyiBackfillRun(store *Store, subs *tianyiSubStore, self, userID string, 
 		}
 
 		j.set(func(x *tianyiBackfill) { x.Current = s.Name })
-		n, err := tianyiSubImportOne(store, "", *e, s) // self=""：不逐条重建 STRM
+		n, err := tianyiSubImportOne(store, "", *e, s, "") // self=""：不逐条重建 STRM
 		processed++
 		if err != nil {
 			failed++

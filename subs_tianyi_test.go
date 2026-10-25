@@ -65,7 +65,7 @@ func TestTianyiSubImportLive(t *testing.T) {
 		t.Fatalf("建临时库失败: %v", err)
 	}
 	entry := tianyiSubEntry{UserID: up, Name: "测试", AutoImport: true}
-	n, err := tianyiSubImportOne(store, "", entry, *target)
+	n, err := tianyiSubImportOne(store, "", entry, *target, "")
 	if err != nil {
 		t.Fatalf("收录失败: %v", err)
 	}

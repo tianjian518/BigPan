@@ -147,3 +147,120 @@ func apiShareCategory(store *Store, self string) http.HandlerFunc {
 		rebuildSTRMAsync(store, self, "改分类")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 事后改剧名：订阅号自动收录的分享标题带 emoji（Emby 认不了）或名字太烂，
+// 在这里整条分享统一改名。改法与改分类同一套：UpdateBatch 整批换
+// Show 与 Dir 的剧名段，追更登记同步更新，STRM 走增量差量重建。
+// ---------------------------------------------------------------------------
+
+// itemDirWithShow 重算条目的虚拟目录：把剧名段换成 newShow，其余原样保留。
+func itemDirWithShow(it *Item, newShow string) string {
+	segs := strings.Split(strings.Trim(it.Dir, "/"), "/")
+	// ① 去掉网盘顶层（与 itemDirWithCategory 同一兼容规则），原样记住，
+	// 结尾拼回去 —— 改名不该动顶层，「天翼」「baidu」各保持各的写法。
+	top := ""
+	if len(segs) > 0 && (segs[0] == providerCN(it.Provider) || segs[0] == it.Provider) {
+		top = segs[0]
+		segs = segs[1:]
+	}
+	// ② 定位旧剧名段（老条目目录与字段对不上时按旧分类段数跳过兜底）
+	show := safeFilename(stripScrape(it.Show))
+	found := -1
+	for i, s := range segs {
+		if s == show {
+			found = i
+			break
+		}
+	}
+	if found < 0 && it.Category != "" {
+		oldSegs := strings.Split(it.Category, "/")
+		if len(segs) > len(oldSegs) {
+			found = len(oldSegs)
+		}
+	}
+	if found < 0 {
+		found = 0
+	}
+	if len(segs) == 0 {
+		segs = []string{safeFilename(newShow)} // 目录只有网盘顶层：补上剧名段
+	} else {
+		segs[found] = safeFilename(newShow)
+	}
+	out := strings.Join(segs, "/")
+	if top != "" {
+		out = top + "/" + out
+	}
+	return out
+}
+
+// apiShareRename 事后改剧名：POST /api/shares/rename
+// body: {"provider":"tianyi","share_id":"123","show":"豆瓣电影 Top250"}
+func apiShareRename(store *Store, self string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Provider string `json:"provider"`
+			ShareID  string `json:"share_id"`
+			Show     string `json:"show"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Provider == "" || req.ShareID == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "参数错误"})
+			return
+		}
+		newShow := cleanShareTitle(strings.TrimSpace(req.Show))
+		if rr := []rune(newShow); len(rr) > 60 {
+			newShow = string(rr[:60])
+		}
+		if newShow == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "剧名不能为空（符号会被自动清掉）"})
+			return
+		}
+
+		show, passcode, cat := "", "", ""
+		renamed := store.UpdateBatch(func(x *Item) bool {
+			if x.Provider != req.Provider || x.ShareID != req.ShareID {
+				return false
+			}
+			if show == "" {
+				show = x.Show
+			}
+			if passcode == "" {
+				passcode = x.Passcode
+			}
+			if cat == "" {
+				cat = x.Category
+			}
+			return true
+		}, func(x *Item) {
+			// 【顺序要紧】先按旧 Show 算新目录，再把 Show 换成新名 ——
+			// 反了的话 itemDirWithShow 找不到旧剧名段，会误替换分类段。
+			x.Dir = itemDirWithShow(x, newShow)
+			x.Show = newShow
+		})
+		if renamed == 0 {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "没有找到这个分享的条目（可能已全部删除）"})
+			return
+		}
+
+		// 追更登记同步：否则追更出的新剧集还按旧剧名落目录
+		if globalShares != nil {
+			m := globalShares.Get(req.Provider, req.ShareID)
+			if m == nil {
+				m = &ShareMeta{Provider: req.Provider, ShareID: req.ShareID, Passcode: passcode}
+			}
+			m.Show = newShow
+			if m.Category == "" && cat != "" {
+				m.Category = cat
+			}
+			globalShares.Put(*m)
+		}
+
+		log.Printf("[改剧名] %s/%s → %q：%d 个条目跟改", req.Provider, show, newShow, renamed)
+		writeJSON(w, map[string]interface{}{"ok": true, "renamed": renamed, "show": newShow})
+		rebuildSTRMAsync(store, self, "改剧名")
+	}
+}

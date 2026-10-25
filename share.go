@@ -570,6 +570,7 @@ func apiShareAdd(store *Store, self string) http.HandlerFunc {
 		if showNameRaw == "" {
 			showNameRaw = shareRoot // 留空：回退到分享顶层名
 		}
+		showNameRaw = cleanShareTitle(showNameRaw)
 		showFinal := safeFilename(showNameRaw)
 		if showFinal == "" {
 			showFinal = "未命名"
@@ -849,7 +850,7 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 		}
 	}
 	if show == "" {
-		show = safeFilename(title)
+		show = safeFilename(cleanShareTitle(title))
 	}
 	// 追更同样剥掉分享顶层容器：与首次导入保持同一套目录规则。
 	// 已有条目若本来就是「剧名 == 顶层名」，剥离是空操作，路径不会变。
