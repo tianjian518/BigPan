@@ -46,6 +46,16 @@ const doubaoSlots = 4
 // 知道还在不在，几千个条目轮着扫必然触发风控。
 const doubaoNodeIDPrefix = "node:"
 
+// dbScanBudget 单次「解析」最多扫多久。
+//
+// 豆包自家盘全局限速 doubaoGap（0.6 秒/请求起步，撞风控自动放大），
+// 一个目录一次请求 —— 几百个目录同步扫下来必然超过反向代理的 60 秒超时，
+// 用户看到的就是「内容一多就解析失败」。
+//
+// 所以每段扫 45 秒就返回：已扫到的文件先给前端预览，pending=true 让前端
+// 自动再发一次接着扫（断点已落盘，不会重复也不会漏）。
+const dbScanBudget = 45 * time.Second
+
 // doubaoIsNodeID 判断某个 ShareID 是不是「自己盘的目录」。
 func doubaoIsNodeID(sid string) bool {
 	return strings.HasPrefix(sid, doubaoNodeIDPrefix)
@@ -159,7 +169,7 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 		if pv != p.Name() {
 			return ShareInfo{}, fmt.Errorf("这个链接属于 %s，不是 %s", pv, p.Name())
 		}
-		title, files, err := scanDoubaoOwn(cli, p.Name(), nodeID, name)
+		title, files, pending, err := scanDoubaoOwn(cli, p.Name(), nodeID, name, dbScanBudget)
 		if err != nil {
 			return ShareInfo{}, err
 		}
@@ -167,6 +177,7 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 			Provider: p.Name(), Title: title,
 			ShareID: doubaoNodeIDPrefix + nodeID, // 用 node_id 当唯一键，避免多个目录互相覆盖
 			Files:   files, Logged: true,
+			Pending: pending, Scanned: len(files),
 		}, nil
 	}
 
@@ -178,7 +189,7 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 	// B2. 新格式分享（/drive/shr/）：走 v2 链路，children/list?token= 直接列
 	if strings.HasPrefix(shareID, doubaoShrPrefix) {
 		tok := strings.TrimPrefix(shareID, doubaoShrPrefix)
-		title, files, err := scanDoubaoShr(cli, p.Name(), tok)
+		title, files, pending, err := scanDoubaoShr(cli, p.Name(), tok)
 		if err != nil {
 			return ShareInfo{}, err
 		}
@@ -186,6 +197,7 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 			Provider: p.Name(), Title: title,
 			ShareID: shareID,
 			Files:   files, Logged: true,
+			Pending: pending, Scanned: len(files),
 		}, nil
 	}
 	title, files, err := scanDoubaoShare(cli, p.Name(), shareID)
@@ -205,7 +217,8 @@ func (p doubaoProvider) RefreshShare(shareID, passcode string) (string, []ShareF
 	}
 	if strings.HasPrefix(shareID, doubaoShrPrefix) {
 		tok := strings.TrimPrefix(shareID, doubaoShrPrefix)
-		title, files, err := scanDoubaoShr(cli, p.Name(), tok)
+		// 追更是后台定时任务，没有反代超时压力：不限时一次扫完。
+		title, files, _, err := scanDoubaoShr(cli, p.Name(), tok)
 		if err != nil {
 			return "", nil, err
 		}
@@ -293,7 +306,7 @@ func resetDoubaoClients() {
 // 两个硬要求：
 //  1. 任何目录读失败都**立刻中止**，不能 continue 跳过 —— 跳过就是静默漏文件；
 //  2. 中止前把进度落盘，用户过几分钟再点一次导入就从断点接着扫。
-func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile, error) {
+func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string, budget time.Duration) (string, []ShareFile, bool, error) {
 	const maxFiles, maxDirs = 20000, 5000
 	type job = dbScanJob
 
@@ -325,6 +338,7 @@ func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile,
 	}
 
 	start := time.Now()
+	deadline := start.Add(budget)
 	dirty := 0
 	// snapshot 把当前现场拍成可落盘的快照。
 	snapshot := func() *dbScanState {
@@ -339,6 +353,14 @@ func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile,
 	}
 
 	for len(queue) > 0 && len(files) < maxFiles && len(seen) < maxDirs {
+		// 分段扫描：到点就交回已扫的部分，前端自动再调一次接着扫。
+		// 断点已经落盘（dbScanPut），进程重启也不会丢。
+		if budget > 0 && time.Now().After(deadline) {
+			dbScanPut(snapshot())
+			log.Printf("[豆包] 分段返回：已扫 %d 个目录 / %d 个视频，还剩 %d 个目录（前端会自动续扫）",
+				len(seen), len(files), len(queue))
+			return title, files, true, nil
+		}
 		j := queue[0]
 		queue = queue[1:]
 		list, err := cli.dbListDirAll(j.ID)
@@ -348,7 +370,7 @@ func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile,
 			// 连带它下面的所有视频一起消失（实测少 3 个文件就是这么来的）。
 			queue = append([]job{j}, queue...)
 			dbScanPut(snapshot())
-			return "", nil, fmt.Errorf("豆包限流了（请求太密，不是文件出错）。已扫到 %d 个目录 / %d 个视频，进度已保存。\n等 3~5 分钟再点一次「解析」，会从这里接着扫，不用从头开始。\n原始信息：%w",
+			return "", nil, false, fmt.Errorf("豆包限流了（请求太密，不是文件出错）。已扫到 %d 个目录 / %d 个视频，进度已保存。\n等 3~5 分钟再点一次「解析」，会从这里接着扫，不用从头开始。\n原始信息：%w",
 				len(seen), len(files), err)
 		}
 		// 单层且只有一个目录时，用它的名字当剧名（和 UC 的折叠规则一致）
@@ -385,9 +407,9 @@ func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile,
 	dbScanDone(key)
 	log.Printf("[豆包] 扫描完成：%d 个目录 / %d 个视频 / 耗时 %v", len(seen), len(files), time.Since(start).Round(time.Second))
 	if len(files) == 0 {
-		return "", nil, fmt.Errorf("这个目录里没有视频文件")
+		return "", nil, false, fmt.Errorf("这个目录里没有视频文件")
 	}
-	return title, files, nil
+	return title, files, false, nil
 }
 
 // scanDoubaoShr 扫描新格式分享（/drive/shr/）。
@@ -396,13 +418,13 @@ func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string) (string, []ShareFile,
 // 列取和自己盘完全同一个接口（children/list?token=xxx），权限由服务端
 // 按「链接可见」判定 —— 所以扫描逻辑直接复用 scanDoubaoOwn，
 // 只有标题来源不同：用 obj/path 接口拿分享根的名字。
-func scanDoubaoShr(cli *Doubao, slot, token string) (string, []ShareFile, error) {
+func scanDoubaoShr(cli *Doubao, slot, token string) (string, []ShareFile, bool, error) {
 	hint, err := cli.dbnNodeName(token)
 	if err != nil {
 		log.Printf("[豆包v2] 取分享名失败（不影响导入）：%v", err)
 		hint = ""
 	}
-	return scanDoubaoOwn(cli, slot, token, hint)
+	return scanDoubaoOwn(cli, slot, token, hint, dbScanBudget)
 }
 
 // scanDoubaoShare 递归扫描别人的分享目录树。规则同自己的盘：失败即停、断点续传。

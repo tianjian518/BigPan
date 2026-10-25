@@ -52,7 +52,7 @@ func TestDoubaoScanResumeLive(t *testing.T) {
 		cli.tr.CloseIdleConnections()
 	}()
 
-	_, files, err := scanDoubaoOwn(cli, "testslot", target.ID, target.Name)
+	_, files, _, err := scanDoubaoOwn(cli, "testslot", target.ID, target.Name, 0)
 	t.Logf("第一轮：%d 个视频，err=%v", len(files), err)
 	if err == nil {
 		t.Skip("目录太小，1.2 秒内就扫完了，没法模拟中断")
@@ -73,7 +73,7 @@ func TestDoubaoScanResumeLive(t *testing.T) {
 	dbExitMu.Unlock()
 	cli.tr.CloseIdleConnections()
 
-	_, files2, err2 := scanDoubaoOwn(cli, "testslot", target.ID, target.Name)
+	_, files2, _, err2 := scanDoubaoOwn(cli, "testslot", target.ID, target.Name, 0)
 	if err2 != nil {
 		t.Fatalf("续扫失败：%v", err2)
 	}

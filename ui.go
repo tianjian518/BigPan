@@ -971,12 +971,41 @@ function batchParse(){
   if(!links.length){toast('没识别到链接，一行一条，以 http 开头');return}
   var pwd=$('sharePwd')?$('sharePwd').value.trim():'';
   var box=$('batchOut');
-  box.innerHTML='<div class="loading"><span class="spin"></span>解析中：共 '+links.length+' 条，大合集要十几秒…</div>';
-  fetch('/api/share/batch/parse',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({links:links,pwd:pwd})})
-  .then(function(r){return r.json()}).then(function(d){
-    if(!d.ok){box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>'+esc(d.error||'')+'</div>';return}
-    BATCH_ROWS=(d.rows||[]).map(function(r){
+  var acc={};      // link → 最近一段的结果（后端每段返回的是累计文件，直接覆盖即可）
+  var round=0;
+  var MAXROUND=80; // 每段 45 秒，80 段够扫几万个文件，防止死循环
+
+  function countAll(){
+    var n=0; Object.keys(acc).forEach(function(k){ n+=(acc[k].files||[]).length; }); return n;
+  }
+  function step(pending){
+    round++;
+    box.innerHTML='<div class="loading"><span class="spin"></span>'+
+      (round===1?'解析中：共 '+links.length+' 条，大合集要十几秒…'
+                :'大目录分段扫描中（第 '+round+' 段），已解析 '+countAll()+' 个文件，可继续等待…')+'</div>';
+    fetch('/api/share/batch/parse',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({links:pending,pwd:pwd})})
+    .then(function(r){return r.json()}).then(function(d){
+      if(!d.ok){
+        box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>'+esc(d.error||'')+'</div>';
+        return;
+      }
+      var next=[];
+      (d.rows||[]).forEach(function(r){
+        acc[r.link]=r;
+        if(r.pending) next.push(r.link);
+      });
+      if(next.length&&round<MAXROUND){ setTimeout(function(){ step(next); },300); return; }
+      if(next.length){ toast('目录太大，已扫到 '+countAll()+' 个文件，点「解析」可接着扫'); }
+      finish();
+    }).catch(function(e){
+      box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>网络错误：'+esc(String(e))+'</div>';
+    });
+  }
+  function finish(){
+    var rows=[];
+    links.forEach(function(l){ if(acc[l]) rows.push(acc[l]); });
+    BATCH_ROWS=rows.map(function(r){
       r.orig_title=r.title||'';
       r.cat1='';r.cat2='';r.open=false;
       r.sel={};(r.files||[]).forEach(function(f){r.sel[f.id]=true});
@@ -984,9 +1013,8 @@ function batchParse(){
     });
     // 分类下拉要用「已导入的条目 + 分享列表」拼出来的分类树
     loadItems(function(){renderBatchRows()});
-  }).catch(function(e){
-    box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>网络错误：'+esc(String(e))+'</div>';
-  });
+  }
+  step(links);
 }
 
 // 一级下拉：不分类 / 已有顶级分类 / 新建
@@ -1187,7 +1215,7 @@ function renderBatchRows(){
    +'</div>'
    +'<div class="row" style="margin-top:8px"><span id="batchMsg" class="sub" style="margin:0"></span></div>'
    +'<div class="sub" style="margin-top:6px">共 '+BATCH_ROWS.length+' 条：待导入 <b style="color:var(--ok)">'+ok+'</b> · 已导入过 <b>'+dup+'</b> · 失败 <b style="color:var(--danger)">'+bad+'</b>（失败的自动跳过，不影响其他）</div>'
-   +'<div class="tips" style="margin-top:8px">「剧名」会显示在媒体库和飞牛影视里，可逐条改；「分类」支持两级，能选已有的，也能点「➕ 新建」现场加；点文件数可以展开、取消不想收录的集。选错了不用重来——导入后到下方分享列表点这行的「分类」随时改。</div>';
+   +'<div class="tips" style="margin-top:8px">「剧名」会显示在媒体库和飞牛影视里，可逐条改；「分类」支持两级，能选已有的，也能点「➕ 新建」现场加；点文件数可以展开、取消不想收录的集。选错了不用重来——导入后到下方分享列表点这行的「分类」「改名」随时改（订阅号原标题带 emoji 的，改名时会自动清掉）。</div>';
 
   box.innerHTML=h;
 }
@@ -1307,7 +1335,7 @@ function loadShares(page){
     CATLIST=d.categories||[];
     // 删除/清理后当前页可能空了，自动回退一页
     if(!arr.length && SHAREPAGE>1){ loadShares(SHAREPAGE-1); return; }
-    var t='<thead><tr><th>剧名</th><th style="width:70px;text-align:right">文件数</th><th style="width:118px;text-align:right">最近入库</th><th style="width:90px">追更</th><th style="width:284px;text-align:right">操作</th></tr></thead><tbody>';
+    var t='<thead><tr><th>剧名</th><th style="width:70px;text-align:right">文件数</th><th style="width:118px;text-align:right">最近入库</th><th style="width:90px">追更</th><th style="width:346px;text-align:right">操作</th></tr></thead><tbody>';
     if(!arr.length)t+='<tr><td colspan=5><div class="empty" style="padding:30px 10px"><div class="ei"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4.5-4.5M12 15 7.5 10.5"/><path d="M4 16.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5"/></svg></div><b>还没有导入过分享</b>粘贴一个网盘分享链接，几秒钟收进虚拟盘</div></td></tr>';
     for(var i=0;i<arr.length;i++){
       var s=arr[i];
@@ -1329,7 +1357,8 @@ function loadShares(page){
       var colRefresh=isNode
         ?'<td><span class="sub" title="这是你自己豆包盘里的目录，文件变动时重新导入即可">目录</span></td>'
         :'<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>';
-      var ops='<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类">分类</button> ';
+      var ops='<button class="mini" onclick="showRename(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+escA(cleanShow(s.show_name))+'\')" title="改剧名：媒体库目录、追更、STRM 一起跟着改；Emby 认不了的符号（emoji 等）会自动清掉">改名</button> '+
+        '<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类">分类</button> ';
       if(!isNode){
         ops='<button class="mini" onclick="refreshShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+esc(s.passcode||'')+'\')">刷新</button> '+ops
           +'<button class="mini danger" onclick="purgeShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+s.files+')">已失效</button> ';
@@ -1445,6 +1474,28 @@ function refreshShare(p,id,pwd){
 }
 // ---- 事后改分类（两级：一级/二级联动下拉）----
 var CATLIST=[], CATM=null;
+// 改剧名：整条分享统一改名（订阅号自动收录的名字带 emoji 时尤其需要）
+function showRename(pv,sid,cur){
+  askText('改剧名','输入新名字；emoji 等符号会自动清掉',function(v){
+    if(v===null)return;
+    fetch('/api/shares/rename',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({provider:pv,share_id:sid,show:v})})
+     .then(function(r){return r.json()}).then(function(d){
+       if(d.ok){
+         toast('已改名（'+d.renamed+' 个条目），媒体库同步中');
+         loadShares();
+         // 正停在媒体库页就地刷新；当前路径正好指着被改名的目录时先退回根，
+         // 否则旧名字的路径已经不存在，列表会空着。
+         var lib=$('pg-lib');
+         if(lib&&lib.style.display!=='none'){
+           if(CURPATH.length&&cleanShow(CURPATH[CURPATH.length-1])===cur)CURPATH=[];
+           loadLib();
+         }
+       }
+       else toast(d.error||'改名失败');
+     }).catch(function(){toast('改名失败，网络异常')});
+  },false,cur||'');
+}
 function openCatModal(el){
   CATM={provider:el.getAttribute('data-p'),share_id:el.getAttribute('data-id'),show:el.getAttribute('data-show')||''};
   var cur=el.getAttribute('data-cur')||'';
@@ -1632,7 +1683,8 @@ function renderLib(){
     '<th style="width:120px;text-align:right">操作</th>'+
     '</tr></thead><tbody>';
   libView.forEach(function(row){
-    if(row.d!==1){ var it=row.it;
+    if(row.d===1){
+    var name=row.name;
     var dn=node[name], cnt=countFiles(dn), ids=collectIds(dn), p=CURPATH.concat([name]);
     var si=dirShare(dn); // 单分享目录（剧名层）才给「分类」
     // 只有「这一层就是剧名」才给分类入口。豆包2 整盘只导入了一部剧时，
@@ -1640,7 +1692,7 @@ function renderLib(){
     // 网盘/分类层不该有分类按钮。
     if(si && cleanShow(si.show)!==cleanShow(name)) si=null;
     var ops=si
-      ? '<button class="mini" data-act="cat">分类</button><button class="mini danger" data-act="del">删除</button>'
+      ? '<button class="mini" data-act="cat">分类</button><button class="mini gray" data-act="ren">改名</button><button class="mini danger" data-act="del">删除</button>'
       : '<button class="mini danger" data-act="del">删除</button>';
     h+='<tr class="librow dirrow" data-type="dir" data-p="'+escA(JSON.stringify(p))+'" data-ids="'+escA(JSON.stringify(ids))+'" data-name="'+escA(name)+'" data-cnt="'+cnt+'"'+
       ' data-cat-p="'+escA(si?si.provider:'')+'" data-cat-id="'+escA(si?si.share_id:'')+'" data-cat-show="'+escA(si?cleanShow(si.show):'')+'" data-cat-cur="'+escA(si?si.category:'')+'">'+
@@ -1746,6 +1798,10 @@ function bindLibRows(){
               fake.setAttribute('data-show',r.getAttribute('data-cat-show')||'');
               fake.setAttribute('data-cur',r.getAttribute('data-cat-cur')||'');
               openCatModal(fake);
+            }
+            else if(act==='ren'){
+              // 改剧名：整条分享统一改（订阅号原标题带 emoji 时尤其需要）
+              showRename(r.getAttribute('data-cat-p')||'',r.getAttribute('data-cat-id')||'',r.getAttribute('data-cat-show')||'');
             }
             else if(act==='del'){ delIds(ids,nm,cnt); }
           };
@@ -2267,7 +2323,7 @@ function tsBrowse(uid,page){
       t+='<tr><td>'+esc(s.name)+(s.is_folder?'':' <span class="cd">单文件</span>')+'</td>'+
         '<td class="cd">'+esc((s.share_date||'').slice(0,16))+'</td>'+
         '<td>'+state+'</td>'+
-        '<td style="text-align:right"><button class="mini'+(s.imported>0?' gray':'')+'" onclick="tsImport(\''+uid+'\','+s.share_id+')">'+(s.imported>0?'重收':'收录')+'</button></td></tr>';
+        '<td style="text-align:right"><button class="mini'+(s.imported>0?' gray':'')+'" onclick="tsImport(\''+uid+'\','+s.share_id+','+escA(JSON.stringify(s.name||''))+')">'+(s.imported>0?'重收':'收录')+'</button></td></tr>';
     }
     t+='</table><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">'+
       (d.page>1?'<button class="mini gray" onclick="tsBrowse(\''+uid+'\','+(d.page-1)+')">上一页</button>':'')+
@@ -2276,13 +2332,18 @@ function tsBrowse(uid,page){
     $('tsShares').innerHTML=t;
   }).catch(function(){toast('拉取失败')});
 }
-function tsImport(uid,sid){
-  toast('收录中，目录多的话要等一会儿…');
-  fetch('/api/tianyi/sub-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:uid,share_id:sid})})
-  .then(function(r){return r.json()}).then(function(d){
-    if(d.ok){toast('已收录 '+(d.title||'')+'：'+d.added+' 条');tsBrowse(uid,TS_PAGE);}
-    else toast(d.error||'收录失败');
-  }).catch(function(){toast('收录失败')});
+// 收录前先让用户确认剧名：资源号原标题爱堆 emoji（Emby 认不了），
+// 这里预填原名直接改；确认后的名字后端会自动清符号。
+function tsImport(uid,sid,nm){
+  askText('收录这部剧','媒体库里显示的名字（可改；符号会自动清掉）',function(v){
+    if(v===null)return;
+    toast('收录中，目录多的话要等一会儿…');
+    fetch('/api/tianyi/sub-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:uid,share_id:sid,show:v})})
+    .then(function(r){return r.json()}).then(function(d){
+      if(d.ok){toast('已收录 '+(d.title||'')+'：'+d.added+' 条');tsBrowse(uid,TS_PAGE);}
+      else toast(d.error||'收录失败');
+    }).catch(function(){toast('收录失败')});
+  },false,nm||'');
 }
 // ---- 天翼订阅号：历史导入（后台慢跑 + 进度轮询） ----
 var TS_BF_TIMER=null,TS_BF_REFRESHED=false;

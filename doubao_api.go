@@ -48,14 +48,78 @@ const (
 // 请求数直接砍掉一个量级，这是减少风控最有效的一招。
 const dbPageSize = 1000
 
-// doubaoGap 全局限速间隔。可被 -doubao-gap 覆盖。
+// doubaoGap 全局限速的基础间隔。可被 -doubao-gap 覆盖。
 //
 // 豆包是「滑动窗口」限流，不是硬性持久封禁：
 //   · 400ms（150 次/分钟）→ 约 300 个目录撞线
+//   · 600ms（100 次/分钟）→ 机房出口实测连打 40 次无异常
 //   · 1 秒（60 次/分钟）  → 家宽出口约 280 个目录撞线，机房出口 380 次还没事
-//   · 2 秒（30 次/分钟）  → 5 分钟只打 150 次，低于窗口阈值，可以连续扫完
-// 家宽 IPv4 是共享出口，阈值比机房低，所以飞牛上要更慢。
-var doubaoGap = 2 * time.Second
+//   · 2 秒（30 次/分钟）  → 5 分钟只打 150 次，最稳但慢
+//
+// 注意：固定值只有两种结果 —— 要么慢到扫描超时，要么快到撞风控。
+// 所以这里取 600ms 作起点，再配 dbGapOnFail/dbGapOnOK 自适应：
+// 一旦撞限流就成倍放大（最多 4 秒），连续顺畅 30 次再折半回落。
+var doubaoGap = 600 * time.Millisecond
+
+// 自适应间隔状态：dbGapCur 为 0 表示用 doubaoGap 基础值。
+var (
+	dbGapMu   sync.Mutex
+	dbGapCur  time.Duration
+	dbGapFail int
+	dbGapOK   int
+)
+
+func dbGapNow() time.Duration {
+	dbGapMu.Lock()
+	defer dbGapMu.Unlock()
+	if dbGapCur <= 0 {
+		return doubaoGap
+	}
+	return dbGapCur
+}
+
+// dbGapOnFail 撞限流：连续 2 次就成倍放大间隔，最多 4 秒。
+func dbGapOnFail() {
+	dbGapMu.Lock()
+	defer dbGapMu.Unlock()
+	dbGapFail++
+	if dbGapFail >= 2 {
+		cur := dbGapCur
+		if cur <= 0 {
+			cur = doubaoGap
+		}
+		if next := cur * 2; next > 4*time.Second {
+			dbGapCur = 4 * time.Second
+		} else {
+			dbGapCur = next
+		}
+		dbGapFail = 0
+		log.Printf("[豆包] 撞限流，请求间隔放大到 %v", dbGapCur)
+	}
+}
+
+// dbGapOnOK 连续成功 30 次，间隔折半回落，最低回到基础值。
+func dbGapOnOK() {
+	dbGapMu.Lock()
+	defer dbGapMu.Unlock()
+	dbGapFail = 0
+	if dbGapCur <= doubaoGap {
+		dbGapCur = 0
+		dbGapOK = 0
+		return
+	}
+	dbGapOK++
+	if dbGapOK >= 30 {
+		dbGapOK = 0
+		if next := dbGapCur / 2; next <= doubaoGap {
+			dbGapCur = 0
+			log.Printf("[豆包] 恢复顺畅，请求间隔回落到基础值 %v", doubaoGap)
+		} else {
+			dbGapCur = next
+			log.Printf("[豆包] 恢复顺畅，请求间隔回落到 %v", dbGapCur)
+		}
+	}
+}
 
 // dbNode 是豆包的节点（文件或目录）。node_type：1=目录 2=普通文件 6=视频。
 type dbNode struct {
@@ -361,11 +425,12 @@ var (
 	dbLastCall time.Time
 )
 
-// dbThrottle 保证任意两次豆包请求至少间隔 doubaoGap。
+// dbThrottle 保证任意两次豆包请求至少间隔当前生效的间隔（自适应）。
 func dbThrottle() {
+	gap := dbGapNow()
 	dbGateMu.Lock()
 	defer dbGateMu.Unlock()
-	if d := doubaoGap - time.Since(dbLastCall); d > 0 {
+	if d := gap - time.Since(dbLastCall); d > 0 {
 		time.Sleep(d)
 	}
 	dbLastCall = time.Now()
@@ -457,6 +522,7 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			d.coolDown(trace.ip)
+			dbGapOnFail()
 			lastErr = fmt.Errorf("豆包接口限流")
 			limitHit = true
 			continue
@@ -468,6 +534,7 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 		// 这是当前出口 IP 被限，不是「这个目录本来就是空的」。
 		if len(bytes.TrimSpace(raw)) == 0 {
 			d.coolDown(trace.ip)
+			dbGapOnFail()
 			lastErr = fmt.Errorf("豆包返回空响应（出口被风控）")
 			limitHit = true
 			continue
@@ -489,6 +556,7 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 			low := strings.ToLower(msg)
 			if strings.Contains(low, "too many") || strings.Contains(msg, "频繁") || out.Code == 429 {
 				d.coolDown(trace.ip)
+				dbGapOnFail()
 				lastErr = fmt.Errorf("豆包接口限流：%s", msg)
 				limitHit = true
 				continue
@@ -504,6 +572,7 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 			return nil, fmt.Errorf("豆包接口错误 %d：%s", out.Code, msg)
 		}
 		dbExitOK(trace.ip) // 这条出口是好的，放回池子
+		dbGapOnOK()
 		return out.Data, nil
 	}
 	if lastErr == nil {
@@ -602,11 +671,37 @@ func (d *Doubao) dbnToList(nodeID string) ([]dbNode, error) {
 }
 
 // dbHome 列根目录，返回根节点 ID 与顶层条目。
+//
+// ⚠️ 必须优先走 aispace（自家盘），不能用飞书新链路打头。
+// 理由（2026-10-25 实测定论，§23.121）：
+//   - aispace 返回的节点带**数字 node_id + tos key**，取链走 get_play_info，
+//     直链落在豆包自家 CDN（v9/v26-videoweb.doubao.com）：单文件 9MB/s，
+//     且**不限连接数**，256KB 小块 0.2 秒/块 —— 爆米花/拖进度条都不卡；
+//   - 飞书新链路返回的是 obj_token（nodcn…），取链只能走 relay
+//     （internal-api-drive-stream.feishu.cn）：一文件只给一条全速连接，
+//     256KB 小块要 2~3 秒/块，WebDAV 播放就是 100KB/s。
+//
+// 自家盘内容在 aispace 里是完整的（天剑豆包影视下实测 1390+ 视频）。
+// 只有 aispace 失败时才降级飞书，保证新版分享照样能浏览。
 func (d *Doubao) dbHome() (rootID string, children []dbNode, err error) {
+	data, aerr := d.post("/samantha/aispace/homepage", map[string]any{})
+	if aerr == nil {
+		body := dbUnwrap(data)
+		var out struct {
+			RootID   string   `json:"root_id"`
+			Children []dbNode `json:"children"`
+		}
+		if e := json.Unmarshal(body, &out); e == nil && (out.RootID != "" || len(out.Children) > 0) {
+			return out.RootID, out.Children, nil
+		}
+		log.Printf("[豆包] aispace 根目录解析为空，尝试新链路")
+	} else {
+		log.Printf("[豆包] aispace 根目录失败，降级新链路：%v", aerr)
+	}
 	if d.v2Key != nil {
 		if ch, e := d.dbnToList(""); e == nil {
 			// 飞书根里混着几百个飞书文档（豆包文件和文档同一空间），
-			// 浏览根只保留文件夹，豆包的顶层目录（Via/天剑豆包影视…）全在里面
+			// 浏览根只保留文件夹
 			out := ch[:0]
 			for _, n := range ch {
 				if n.IsDir() && n.Name != "" {
@@ -615,24 +710,30 @@ func (d *Doubao) dbHome() (rootID string, children []dbNode, err error) {
 			}
 			return "", out, nil
 		} else {
-			log.Printf("[豆包v2] 列根目录失败，降级老链路：%v", e)
+			log.Printf("[豆包v2] 列根目录失败：%v", e)
 		}
 	}
-	data, err := d.post("/samantha/aispace/homepage", map[string]any{})
-	if err != nil {
-		return "", nil, err
+	if aerr != nil {
+		return "", nil, aerr
 	}
-	var out struct {
-		RootID   string   `json:"root_id"`
-		Children []dbNode `json:"children"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return "", nil, fmt.Errorf("豆包根目录结构异常：%s", dbSnippet(data))
-	}
-	return out.RootID, out.Children, nil
+	return "", nil, fmt.Errorf("豆包根目录结构异常：%s", dbSnippet(dbUnwrap(data)))
 }
 
 // dbPage 是目录接口的一页。
+
+// dbUnwrap 豆包 2026-10 起把业务字段包进 data：{code,msg,data:{...}}。
+// 老代码按顶层解析会拿到全空值（表现为"分享为空"/"没有可播放的转码流"），
+// 这里统一剥一层；本来就是顶层结构时原样返回。
+func dbUnwrap(raw json.RawMessage) json.RawMessage {
+	var probe struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &probe); err == nil && len(probe.Data) > 0 && string(probe.Data) != "null" {
+		return probe.Data
+	}
+	return raw
+}
+
 type dbPage struct {
 	Children   []dbNode `json:"children"`
 	NextCursor string   `json:"next_cursor"`
@@ -640,12 +741,14 @@ type dbPage struct {
 }
 
 // dbListDir 列自己盘某个目录（单页）。
+// 数字 node_id 是老体系（自家盘 / 老格式分享）→ 直接走 aispace，拿 tos key，
+// 取链落豆包自家 CDN；只有飞书 token（字母串）才走新链路。见 dbHome 注释。
 func (d *Doubao) dbListDir(nodeID string) ([]dbNode, error) {
-	if d.v2Key != nil {
+	if !dbIsOldNodeID(nodeID) && d.v2Key != nil {
 		if ch, e := d.dbnToList(nodeID); e == nil {
 			return ch, nil
 		} else {
-			log.Printf("[豆包v2] 列目录失败，降级老链路：%v", e)
+			log.Printf("[豆包v2] 列目录失败（token=%s），降级老链路：%v", nodeID, e)
 		}
 	}
 	return d.dbListDirPage(nodeID, "")
@@ -660,6 +763,7 @@ func (d *Doubao) dbListDirPage(nodeID, cursor string) ([]dbNode, error) {
 	if err != nil {
 		return nil, err
 	}
+	data = dbUnwrap(data)
 	var out dbPage
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("豆包目录结构异常：%s", dbSnippet(data))
@@ -674,11 +778,11 @@ func (d *Doubao) dbListDirPage(nodeID, cursor string) ([]dbNode, error) {
 // 那正是之前「扫描少了几千个文件」的元凶之一：前几页正常、第 4 页被风控，
 // 代码 break 后把前 3 页交出去，看起来一切正常但少了 90% 的内容。
 func (d *Doubao) dbListDirAll(nodeID string) ([]dbNode, error) {
-	if d.v2Key != nil {
+	if !dbIsOldNodeID(nodeID) && d.v2Key != nil {
 		if ch, e := d.dbnToList(nodeID); e == nil {
 			return ch, nil
 		} else {
-			log.Printf("[豆包v2] 列目录失败，降级老链路：%v", e)
+			log.Printf("[豆包v2] 列目录失败（token=%s），降级老链路：%v", nodeID, e)
 		}
 	}
 	var all []dbNode
@@ -713,6 +817,7 @@ func (d *Doubao) dbShareOverview(shareID string) (title string, nodes []dbNode, 
 	if err != nil {
 		return "", nil, err
 	}
+	data = dbUnwrap(data)
 	var out struct {
 		Share *struct {
 			ShareName string `json:"share_name"`
@@ -753,6 +858,7 @@ func (d *Doubao) dbShareListDir(shareID, nodeID string) ([]dbNode, error) {
 		if err != nil {
 			return nil, err
 		}
+		data = dbUnwrap(data)
 		var out dbPage
 		if err := json.Unmarshal(data, &out); err != nil {
 			return nil, fmt.Errorf("豆包分享目录结构异常：%s", dbSnippet(data))
@@ -778,6 +884,7 @@ func (d *Doubao) dbPlayInfo(nodeID, key, shareID string) ([]dbMedia, error) {
 	if err != nil {
 		return nil, err
 	}
+	data = dbUnwrap(data)
 	var out struct {
 		MediaInfo []dbMedia `json:"media_info"`
 		MediaType string    `json:"media_type"`

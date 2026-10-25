@@ -71,7 +71,7 @@ func TestDoubaoScanResumeMock(t *testing.T) {
 
 	cli := newDoubaoAt("test", srv.URL)
 
-	_, files, err := scanDoubaoOwn(cli, "mockslot", root, "")
+	_, files, _, err := scanDoubaoOwn(cli, "mockslot", root, "", 0)
 	if err == nil {
 		t.Fatal("预算耗尽时应当失败，而不是静默返回半截数据")
 	}
@@ -94,7 +94,7 @@ func TestDoubaoScanResumeMock(t *testing.T) {
 	dbExits = map[string]*dbExitState{}
 	dbExitMu.Unlock()
 
-	_, files2, err2 := scanDoubaoOwn(cli, "mockslot", root, "")
+	_, files2, _, err2 := scanDoubaoOwn(cli, "mockslot", root, "", 0)
 	if err2 != nil {
 		t.Fatalf("续扫失败：%v", err2)
 	}

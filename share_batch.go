@@ -94,7 +94,10 @@ func apiShareBatchParse(store *Store) http.HandlerFunc {
 			Exists   bool   `json:"exists,omitempty"`
 			// Files 预览用：让用户在入库前能展开取消勾选（和单条导入一致）。
 			Files []ShareFile `json:"files,omitempty"`
-			Error string      `json:"error,omitempty"`
+			// Pending 大目录分段扫还没扫完（豆包自家盘限速）；前端会自动续调。
+			Pending bool   `json:"pending,omitempty"`
+			Scanned int    `json:"scanned,omitempty"`
+			Error   string `json:"error,omitempty"`
 		}
 		out := make([]row, 0, len(req.Links))
 
@@ -135,8 +138,11 @@ func apiShareBatchParse(store *Store) http.HandlerFunc {
 			it.Passcode = info.Passcode
 			it.Count = n
 			it.Files = info.Files
+			it.Pending = info.Pending
+			it.Scanned = info.Scanned
 			it.Exists = shareExists(store, info.Provider, info.ShareID)
-			if n == 0 {
+			// 分段扫描第一段可能只扫到目录、还没扫到视频，这时不能判「没有视频」。
+			if n == 0 && !info.Pending {
 				it.OK = false
 				it.Error = "分享里没有视频文件"
 			}

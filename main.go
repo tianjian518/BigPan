@@ -746,6 +746,46 @@ func handlePlay(store *Store, as *AccountStore) http.HandlerFunc {
 			return
 		}
 
+		// 豆包：302 直连飞书 relay（2026-10-25 §23.114 实测定论，instabox 多方测试）。
+		//
+		// 为什么必须 302 而不是中转：
+		//   ① §0 铁律——一切播放必须 302，唯一例外夸克。豆包的 Wants302()
+		//      早就声明 true（/dav 与 STRM 已按 302 走；provider_doubao.go:148
+		//      注释亦写明「302 后播放器无需任何特殊头」），唯独 /play 漏了分支，
+		//      现状落本机中转 conc=4 本身就是违律；
+		//   ② 飞书 relay 对「同 URL 并发连接 >1 条」有惩罚：附加连接当场饿死
+		//      （实测 50~90KB/s），该 URL 事后还被降速 + 周期性 stall。惩罚记忆
+		//      持续数分钟，且锚定 URL 不锚定文件——同文件换新链立即恢复满速
+		//      （§23.114 实验 5/6）。conc=4 中转等于每次播放都暴力同一个 URL，
+		//      卡顿真因即此；
+		//   ③ 豆包新链直链鉴权全在 query 里（authorization=DPoP+token & dpop
+		//      proof，本地 ECDSA 签名零网络开销），302 后播放器无需特殊头。
+		//
+		// 与夸克 TV 分支的区别：夸克是「取不到直链只能中转」的被迫例外；
+		// 豆包是「能 302 却错误地落了中转」，本次修正。解析失败宁可 502，
+		// 不把视频流量灌进本机（与天翼/UC 分支同一立场）。
+		//
+		// 每次现炒不读缓存：缓存本身无害（§23.114 实验 5：20 分钟高龄链照样
+		// 满速），但万一播放器开过 2+ 连接触发惩罚，缓存的死链会让卡顿持续到
+		// TTL 结束；现炒换新链即清零，而本地签名没有重解析成本可摊。
+		if it != nil && strings.HasPrefix(it.Provider, "doubao") {
+			dropPlayTarget(it.ID)
+			u, uerr := resolveDirectURL(it)
+			if uerr != nil || u == "" {
+				msg := "未返回直链"
+				if uerr != nil {
+					msg = uerr.Error()
+				}
+				log.Printf("  [直链] %s（豆包）解析失败: %s", it.FileName(), msg)
+				http.Error(w, "取直链失败: "+msg, http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Cache-Control", "private, max-age=300")
+			log.Printf("  [直链] %s（豆包）→ 302 直连飞书 relay（数据不过本机，避开多连接惩罚）", it.FileName())
+			http.Redirect(w, r, u, http.StatusFound)
+			return
+		}
+
 		conc := *flagConc
 		if v := q.Get("conc"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 256 {
@@ -1188,9 +1228,12 @@ func davGuard(h http.Handler, store *Store, self string) http.Handler {
 			if vpath != "" && !strings.HasSuffix(vpath, "/") {
 				if it := store.FindByName(vpath); it != nil && it.IsShare() {
 					if p := providerByName(it.Provider); p != nil && p.Wants302() {
+						// §0 铁律：所有网盘一律 302 直连，数据不过本机。
+						// 没有开关、没有例外（夸克除外，硬编码）。解析失败一律 502，
+						// 绝不回落中转。
 						u, uerr := resolveDirectURL(it)
 						if uerr == nil {
-							log.Printf("  [302] %s（%s）→ 客户端直连网盘 CDN", it.FileName(), it.Provider)
+							log.Printf("  [302] %s（%s）→ 客户端直连网盘 CDN range=%q", it.FileName(), it.Provider, r.Header.Get("Range"))
 							http.Redirect(w, r, u, http.StatusFound)
 							return
 						}
@@ -1640,6 +1683,7 @@ func main() {
 	mux.HandleFunc("/api/shares/toggle", requireAuth(apiShareToggle(store)))
 	// 事后改分类：导入后发现分错了，搬目录 + 换追更登记 + 增量同步 STRM
 	mux.HandleFunc("/api/shares/category", requireAuth(apiShareCategory(store, self)))
+	mux.HandleFunc("/api/shares/rename", requireAuth(apiShareRename(store, self)))
 	mux.HandleFunc("/api/shares/", requireAuth(apiShareDelete(store)))
 	mux.HandleFunc("/api/shows/delete", requireAuth(apiShowDelete(store, self)))
 	mux.HandleFunc("/api/shares/refresh", requireAuth(apiShareRefresh(store, self)))

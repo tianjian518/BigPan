@@ -21,6 +21,11 @@ type ShareInfo struct {
 	Passcode string      `json:"passcode,omitempty"` // 提取码
 	Files    []ShareFile `json:"files"`
 	Logged   bool        `json:"logged"` // 取流所需的账号是否已就绪
+	// Pending / Scanned 用于「大目录分段扫」：豆包自家盘限速 0.6~2 秒/请求，
+	// 几百个目录同步扫必然撞反向代理超时。这里每段扫 45 秒就返回，
+	// 带上 pending=true 和已扫目录数，前端自动续调一次接着扫（断点已落盘）。
+	Pending bool `json:"pending,omitempty"`
+	Scanned int  `json:"scanned,omitempty"`
 }
 
 // PlayTarget 播放地址及取流所需的凭据。
