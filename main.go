@@ -1694,6 +1694,7 @@ func main() {
 	mux.HandleFunc("/api/share/add", requireAuth(apiShareAdd(store, self)))
 	// 批量导入：先解析预览（每行可单独调分类），确认后再入库
 	mux.HandleFunc("/api/share/batch/parse", requireAuth(apiShareBatchParse(store)))
+	mux.HandleFunc("/api/share/parse/status", requireAuth(apiShareScanStatus()))
 	mux.HandleFunc("/api/share/batch/add", requireAuth(apiShareBatchAdd(store, self)))
 	// STRM 导出：把虚拟盘镜像成 /data/strm 下的 .strm 目录树（飞牛影视媒体库用）
 	mux.HandleFunc("/api/strm/rebuild", requireAuth(apiSTRMRebuild(store, self)))

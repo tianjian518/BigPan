@@ -169,6 +169,20 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 		if pv != p.Name() {
 			return ShareInfo{}, fmt.Errorf("这个链接属于 %s，不是 %s", pv, p.Name())
 		}
+		scanKey := "own|" + p.Name() + "|" + nodeID
+		// 后台已经在扫这个目录：直接把当前进度交回去，别再开一轮同步扫描
+		// （重复扫会双倍打接口，还可能互相抢断点）。
+		if t, fs, ok := dbTaskRunningInfo(scanKey); ok {
+			return ShareInfo{
+				Provider: p.Name(), Title: t,
+				ShareID: doubaoNodeIDPrefix + nodeID,
+				Files:   fs, Logged: true,
+				Pending: true, Scanned: len(fs), ScanKey: scanKey,
+				Resume: func() (string, []ShareFile, bool, error) {
+					return scanDoubaoOwn(cli, p.Name(), nodeID, name, dbScanBudget)
+				},
+			}, nil
+		}
 		title, files, pending, err := scanDoubaoOwn(cli, p.Name(), nodeID, name, dbScanBudget)
 		if err != nil {
 			return ShareInfo{}, err
@@ -178,6 +192,10 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 			ShareID: doubaoNodeIDPrefix + nodeID, // 用 node_id 当唯一键，避免多个目录互相覆盖
 			Files:   files, Logged: true,
 			Pending: pending, Scanned: len(files),
+			ScanKey: "own|" + p.Name() + "|" + nodeID,
+			Resume: func() (string, []ShareFile, bool, error) {
+				return scanDoubaoOwn(cli, p.Name(), nodeID, name, dbScanBudget)
+			},
 		}, nil
 	}
 
@@ -189,6 +207,17 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 	// B2. 新格式分享（/drive/shr/）：走 v2 链路，children/list?token= 直接列
 	if strings.HasPrefix(shareID, doubaoShrPrefix) {
 		tok := strings.TrimPrefix(shareID, doubaoShrPrefix)
+		scanKey := "own|" + p.Name() + "|" + tok
+		if t, fs, ok := dbTaskRunningInfo(scanKey); ok {
+			return ShareInfo{
+				Provider: p.Name(), Title: t, ShareID: shareID,
+				Files: fs, Logged: true,
+				Pending: true, Scanned: len(fs), ScanKey: scanKey,
+				Resume: func() (string, []ShareFile, bool, error) {
+					return scanDoubaoOwn(cli, p.Name(), tok, t, dbScanBudget)
+				},
+			}, nil
+		}
 		title, files, pending, err := scanDoubaoShr(cli, p.Name(), tok)
 		if err != nil {
 			return ShareInfo{}, err
@@ -198,6 +227,10 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 			ShareID: shareID,
 			Files:   files, Logged: true,
 			Pending: pending, Scanned: len(files),
+			ScanKey: "own|" + p.Name() + "|" + tok,
+			Resume: func() (string, []ShareFile, bool, error) {
+				return scanDoubaoOwn(cli, p.Name(), tok, title, dbScanBudget)
+			},
 		}, nil
 	}
 	title, files, err := scanDoubaoShare(cli, p.Name(), shareID)

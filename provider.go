@@ -26,6 +26,11 @@ type ShareInfo struct {
 	// 带上 pending=true 和已扫目录数，前端自动续调一次接着扫（断点已落盘）。
 	Pending bool `json:"pending,omitempty"`
 	Scanned int  `json:"scanned,omitempty"`
+	// ScanKey + Resume 给后台续扫用（不参与 JSON）：
+	// 解析接口发现 pending 就把 Resume 丢进 goroutine 扫到完，前端只轮询进度，
+	// 关掉页面也不影响；ScanKey 同时用来做任务去重（同一个目录不重复开）。
+	ScanKey string                                      `json:"-"`
+	Resume  func() (string, []ShareFile, bool, error)   `json:"-"`
 }
 
 // PlayTarget 播放地址及取流所需的凭据。

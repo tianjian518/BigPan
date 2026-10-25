@@ -94,9 +94,13 @@ func apiShareBatchParse(store *Store) http.HandlerFunc {
 			Exists   bool   `json:"exists,omitempty"`
 			// Files 预览用：让用户在入库前能展开取消勾选（和单条导入一致）。
 			Files []ShareFile `json:"files,omitempty"`
-			// Pending 大目录分段扫还没扫完（豆包自家盘限速）；前端会自动续调。
+			// Pending 大目录分段扫还没扫完（豆包自家盘限速）。
+			// Job 非空表示服务端已在后台续扫，前端轮询 /api/share/parse/status 即可，
+			// 关掉页面也会继续扫完。
 			Pending bool   `json:"pending,omitempty"`
 			Scanned int    `json:"scanned,omitempty"`
+			Job     string `json:"job,omitempty"`
+			Remain  int    `json:"remain,omitempty"`
 			Error   string `json:"error,omitempty"`
 		}
 		out := make([]row, 0, len(req.Links))
@@ -140,6 +144,12 @@ func apiShareBatchParse(store *Store) http.HandlerFunc {
 			it.Files = info.Files
 			it.Pending = info.Pending
 			it.Scanned = info.Scanned
+			if info.Pending && info.Resume != nil && info.ScanKey != "" {
+				// 交给后台 goroutine 扫完，前端只轮询进度（关页面不影响）
+				it.Job = info.ScanKey
+				dbTaskStart(info.ScanKey, info.Title, info.Files, info.Resume)
+				it.Remain = dbScanPending(info.ScanKey)
+			}
 			it.Exists = shareExists(store, info.Provider, info.ShareID)
 			// 分段扫描第一段可能只扫到目录、还没扫到视频，这时不能判「没有视频」。
 			if n == 0 && !info.Pending {

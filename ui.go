@@ -971,36 +971,72 @@ function batchParse(){
   if(!links.length){toast('没识别到链接，一行一条，以 http 开头');return}
   var pwd=$('sharePwd')?$('sharePwd').value.trim():'';
   var box=$('batchOut');
-  var acc={};      // link → 最近一段的结果（后端每段返回的是累计文件，直接覆盖即可）
+  var acc={};       // link → 最新结果（后端每段返回累计文件，直接覆盖）
+  var jobs={};      // link → 后台任务 key（服务端在扫，关页面也不停）
   var round=0;
-  var MAXROUND=80; // 每段 45 秒，80 段够扫几万个文件，防止死循环
+  var MAXROUND=80;
+  var remain=0;
 
   function countAll(){
     var n=0; Object.keys(acc).forEach(function(k){ n+=(acc[k].files||[]).length; }); return n;
   }
+  function loading(txt){
+    box.innerHTML='<div class="loading"><span class="spin"></span>'+txt+'</div>';
+  }
+  function fail(msg){
+    box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>'+esc(msg||'')+'</div>';
+  }
   function step(pending){
     round++;
-    box.innerHTML='<div class="loading"><span class="spin"></span>'+
-      (round===1?'解析中：共 '+links.length+' 条，大合集要十几秒…'
-                :'大目录分段扫描中（第 '+round+' 段），已解析 '+countAll()+' 个文件，可继续等待…')+'</div>';
+    loading(round===1?'解析中：共 '+links.length+' 条，大合集要十几秒…'
+                    :'继续解析（第 '+round+' 段），已解析 '+countAll()+' 个文件…');
     fetch('/api/share/batch/parse',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({links:pending,pwd:pwd})})
     .then(function(r){return r.json()}).then(function(d){
-      if(!d.ok){
-        box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>'+esc(d.error||'')+'</div>';
-        return;
-      }
-      var next=[];
+      if(!d.ok){ fail(d.error); return; }
+      var next=[], watch=[];
       (d.rows||[]).forEach(function(r){
         acc[r.link]=r;
-        if(r.pending) next.push(r.link);
+        remain=r.remain||0;
+        if(r.job){ jobs[r.link]=r.job; watch.push(r.link); }
+        else if(r.pending){ next.push(r.link); }
       });
+      if(watch.length){ watchJobs(watch); return; }
       if(next.length&&round<MAXROUND){ setTimeout(function(){ step(next); },300); return; }
-      if(next.length){ toast('目录太大，已扫到 '+countAll()+' 个文件，点「解析」可接着扫'); }
       finish();
-    }).catch(function(e){
-      box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>网络错误：'+esc(String(e))+'</div>';
-    });
+    }).catch(function(e){ fail('网络错误：'+String(e)); });
+  }
+  // 服务端后台在扫：只轮询进度，不重复发起（关掉页面服务端照样扫完）
+  function watchJobs(list){
+    var alive=list.slice();
+    function tick(){
+      var still=[];
+      var ps=alive.map(function(l){
+        return fetch('/api/share/parse/status?job='+encodeURIComponent(jobs[l]))
+        .then(function(r){return r.json()}).then(function(s){
+          if(!s.ok){ return null; }             // 任务过期：当成结束，用已有结果
+          var row=acc[l]||{};
+          row.files=s.files||row.files||[];
+          row.count=row.files.length;
+          row.title=s.title||row.title;
+          row.pending=!s.done;
+          row.remain=s.remain;
+          acc[l]=row;
+          if(s.remain&&s.remain>remain){ remain=s.remain; }
+          if(!s.done){ still.push(l); }
+          return s;
+        }).catch(function(){ return null; });
+      });
+      Promise.all(ps).then(function(){
+        alive=still;
+        var n=countAll();
+        loading('大目录后台扫描中（服务端在扫，可关页面），已解析 '+n+' 个文件'
+          +(remain>0?('，还剩约 '+remain+' 个目录'):'')+'…');
+        if(alive.length){ setTimeout(tick,2500); }
+        else { finish(); }
+      });
+    }
+    tick();
   }
   function finish(){
     var rows=[];
@@ -1011,12 +1047,10 @@ function batchParse(){
       r.sel={};(r.files||[]).forEach(function(f){r.sel[f.id]=true});
       return r;
     });
-    // 分类下拉要用「已导入的条目 + 分享列表」拼出来的分类树
     loadItems(function(){renderBatchRows()});
   }
   step(links);
 }
-
 // 一级下拉：不分类 / 已有顶级分类 / 新建
 function bCat1Opts(cur){
   var h='<option value="">不分类</option>';

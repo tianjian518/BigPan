@@ -116,3 +116,14 @@ func dbScanDone(key string) {
 	}
 	dbScanMu.Unlock()
 }
+
+// dbScanPending 返回某个扫描还没扫的目录数（后台任务给前端报进度用）。
+func dbScanPending(key string) int {
+	dbScanInit()
+	dbScanMu.Lock()
+	defer dbScanMu.Unlock()
+	if st, ok := dbScanAll[key]; ok {
+		return len(st.Queue)
+	}
+	return 0
+}
