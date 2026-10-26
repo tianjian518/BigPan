@@ -20,7 +20,7 @@ import (
 )
 
 // batchParseCache 解析结果缓存：key = provider|shareID。
-// 只活 30 分钟，够用户"解析 → 调分类 → 导入"这段操作。
+// 活 6 小时：大目录分段扫可能跑一个多小时，扫完还要挑分类，30 分钟不够。
 type batchParseCacheT struct {
 	mu    sync.Mutex
 	items map[string]batchParsed
@@ -30,6 +30,9 @@ type batchParsed struct {
 	info ShareInfo
 	at   time.Time
 }
+
+// batchParseTTL 解析结果缓存寿命。
+const batchParseTTL = 6 * time.Hour
 
 var batchParseCache = &batchParseCacheT{items: map[string]batchParsed{}}
 
@@ -43,7 +46,7 @@ func (c *batchParseCacheT) put(info ShareInfo) {
 	// 顺手清过期项，避免长期运行堆积
 	now := time.Now()
 	for k, v := range c.items {
-		if now.Sub(v.at) > 30*time.Minute {
+		if now.Sub(v.at) > batchParseTTL {
 			delete(c.items, k)
 		}
 	}
@@ -54,7 +57,7 @@ func (c *batchParseCacheT) get(provider, shareID string) (ShareInfo, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	v, ok := c.items[batchCacheKey(provider, shareID)]
-	if !ok || time.Since(v.at) > 30*time.Minute {
+	if !ok || time.Since(v.at) > batchParseTTL {
 		return ShareInfo{}, false
 	}
 	return v.info, true
@@ -147,7 +150,7 @@ func apiShareBatchParse(store *Store) http.HandlerFunc {
 			if info.Pending && info.Resume != nil && info.ScanKey != "" {
 				// 交给后台 goroutine 扫完，前端只轮询进度（关页面不影响）
 				it.Job = info.ScanKey
-				dbTaskStart(info.ScanKey, info.Title, info.Files, info.Resume)
+				dbTaskStart(info.ScanKey, info.Provider, info.ShareID, info.Title, info.Files, info.Resume)
 				it.Remain = dbScanPending(info.ScanKey)
 			}
 			it.Exists = shareExists(store, info.Provider, info.ShareID)
@@ -203,7 +206,10 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 			OK       bool   `json:"ok"`
 			Added    int    `json:"added"`
 			Skipped  bool   `json:"skipped,omitempty"`
-			Error    string `json:"error,omitempty"`
+			// Pending 表示这个目录后台还在扫：本次导入的是当前扫到的部分，
+			// 扫完再点一次导入会把剩下的补上（已入库的会自动跳过）。
+			Pending bool   `json:"pending,omitempty"`
+			Error   string `json:"error,omitempty"`
 		}
 		out := make([]res, 0, len(req.Items))
 		totalAdded := 0
@@ -212,6 +218,13 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 		for i, item := range req.Items {
 			rr := res{Provider: item.Provider, ShareID: item.ShareID}
 			info, ok := batchParseCache.get(item.Provider, item.ShareID)
+			// 后台任务手里是最新最全的（缓存每扫完一段才刷新一次）。
+			// 谁的文件多就用谁 —— 否则「扫出几千个、只导入几十个」。
+			if j := dbTaskByShare(item.Provider, item.ShareID); j != nil {
+				if ji := j.asShareInfo(); len(ji.Files) > len(info.Files) {
+					info, ok = ji, true
+				}
+			}
 			if !ok {
 				rr.Error = "解析结果已过期，请重新解析"
 				out = append(out, rr)
@@ -223,6 +236,7 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 				showName = info.Title
 			}
 			rr.Title = showName
+			rr.Pending = info.Pending // 后台还在扫：本次只导当前部分
 			if shareExists(store, info.Provider, info.ShareID) {
 				rr.OK, rr.Skipped = true, true
 				out = append(out, rr)
