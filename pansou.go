@@ -180,6 +180,11 @@ func apiPanSouSearch() http.HandlerFunc {
 				if panSouIsEbook(it.Note) {
 					continue // 电子书/文档：影视库用不上，白白占屏
 				}
+				// 前端要把它渲染成 <a href>：「查看原链接」点开就是网盘分享页。
+				// 只放行 http/https，挡住 javascript:/data:/file: 这类能执行脚本的协议。
+				if !panSouSafeURL(it.URL) {
+					continue
+				}
 				byCloud[cloud] = append(byCloud[cloud], panSouItem{
 					Cloud: cloud, CloudCN: cn,
 					Note: strings.TrimSpace(it.Note), URL: it.URL, Password: it.Password,
@@ -261,4 +266,21 @@ func panSouIsEbook(note string) bool {
 		}
 	}
 	return false
+}
+
+// panSouSafeURL 只允许 http/https 的绝对地址。
+// 这些链接最终会进前端的 <a href>，必须挡住 javascript:/data: 等可执行协议。
+func panSouSafeURL(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return false
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	return u.Host != ""
 }

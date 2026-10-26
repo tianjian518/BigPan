@@ -171,6 +171,9 @@ button.danger{background:#fff;color:var(--danger);border:1px solid #f0c4cd;box-s
 button.danger:hover{background:var(--danger2);border-color:var(--danger)}
 button:disabled{opacity:.45;cursor:default;transform:none}
 button.mini{padding:4.5px 12px;font-size:13.5px;border-radius:7px;font-weight:500;white-space:nowrap}
+/* 资源搜索结果标题：点开原分享页看详情（不加额外按钮，标题本身就是链接） */
+.psTtl{font-size:14px;color:inherit;text-decoration:none;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.psTtl:hover{color:var(--pri);text-decoration:underline}
 /* 分页页码按钮：方形小按钮，当前页主色实底且禁用淡出要豁免 */
 .pgb{min-width:31px;padding:4.5px 8px;font-size:13px;border-radius:7px;text-align:center;font-variant-numeric:tabular-nums}
 .pgb.on,.pgb.on:disabled{background:var(--pri);color:#fff;border:1px solid var(--pri);box-shadow:0 1px 2px rgba(32,128,240,.3);font-weight:600;opacity:1;cursor:default}
@@ -1045,12 +1048,21 @@ function psRender(){
   list.forEach(function(it){
     h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(0,0,0,.08);border-radius:10px;margin-bottom:8px">'
       +'<span style="flex:0 0 auto;font-size:12px;padding:2px 8px;border-radius:6px;background:rgba(42,125,42,.1);color:#2a7d2a">'+esc(it.cloud_cn)+'</span>'
-      +'<div style="flex:1;min-width:0"><div style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.note||'(无标题)')+'</div>'
+      +'<div style="flex:1;min-width:0">'+psTitle(it)+''
+
       +'<div class="sub" style="margin:2px 0 0;font-size:12px">'+esc(it.datetime||'')+(it.password?(' · 提取码 '+esc(it.password)):'')+'</div></div>'
       +'<button class="mini" onclick="psImport('+it._i+')">导入</button>'
       +'</div>';
   });
   out.innerHTML=h;
+}
+// psTitle 标题本身当超链接：点开就是网盘原分享页（看文件列表、是否还有效）。
+// 没有合法 http(s) 地址时退回纯文本，避免出现点不动的链接。
+function psTitle(it){
+  var note=esc(it.note||'(无标题)');
+  var u=it.url||'';
+  if(!/^https?:\/\//i.test(u)) return '<div style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+note+'</div>';
+  return '<a class="psTtl" href="'+escA(u)+'" target="_blank" rel="noopener noreferrer" title="'+escA(it.note||'')+'">'+note+'</a>';
 }
 function psImport(i){
   var it=PSRES[i]; if(!it)return;

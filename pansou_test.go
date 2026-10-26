@@ -180,3 +180,48 @@ func TestPanSouPerCloudLimit(t *testing.T) {
 		t.Errorf("百度只留下 %d 条，应 2 条", nb)
 	}
 }
+
+// 非 http(s) 链接必须丢弃：前端会把 URL 放进 <a href>，
+// javascript: 之类一旦漏过去就是点击即执行脚本。
+func TestPanSouDropsUnsafeURL(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"code": 200,
+			"data": map[string]any{
+				"total": 4,
+				"merged_by_type": map[string]any{
+					"quark": []map[string]any{
+						{"url": "https://pan.quark.cn/s/ok", "note": "正常", "datetime": "2026-10-25 10:00:00"},
+						{"url": "javascript:alert(1)", "note": "脚本", "datetime": "2026-10-25 11:00:00"},
+						{"url": "data:text/html,<script>alert(1)</script>", "note": "data", "datetime": "2026-10-25 12:00:00"},
+						{"url": "file:///etc/passwd", "note": "本地文件", "datetime": "2026-10-25 13:00:00"},
+					},
+				},
+			},
+		})
+	}))
+	defer fake.Close()
+
+	old := panSouCfg
+	defer func() { panSouCfg = old }()
+	panSouCfg = panSouConfig{URL: fake.URL, Limit: 40}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/pansou/search?kw=x", nil)
+	apiPanSouSearch()(rec, req)
+
+	var out struct {
+		OK    bool         `json:"ok"`
+		Items []panSouItem `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("响应不是 JSON：%s", rec.Body.String())
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("只应保留 1 条 https 链接，实际 %d 条：%s", len(out.Items), rec.Body.String())
+	}
+	if got := out.Items[0].URL; got != "https://pan.quark.cn/s/ok" {
+		t.Fatalf("保留的 URL=%q，应为正常 https 链接", got)
+	}
+}
