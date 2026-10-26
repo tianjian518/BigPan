@@ -1282,11 +1282,12 @@ function batchAdd(){
     });
     renderBatchRows();
     var m=$('batchMsg');
-    var pend=0,skip=0;
-    rows.forEach(function(x){ if(x.pending) pend++; if(x.skipped) skip++; });
+    var pend=0,skip=0,filled=0;
+    rows.forEach(function(x){ if(x.pending) pend++; if(x.skipped) skip++; if(x.filled) filled+=x.filled; });
     if(m)m.innerHTML='<b style="color:var(--ok)">完成</b>：导入 <b>'+d.imported+'</b> 个分享，共 '+d.added+' 条'
       +(pend?('　<span style="color:var(--warn)">另有 '+pend+' 个目录后台仍在扫描，扫完再点一次「开始导入」可补齐剩余</span>'):'')
-      +(skip?('　<span style="color:var(--warn)">跳过 '+skip+' 个（库里已有）。若之前只导入了部分，请先到下方分享列表删除该分享，再重新导入</span>'):'');
+      +(filled?('　<span style="color:var(--ok)">其中 '+filled+' 条是补齐的缺集</span>'):'')
+      +(skip?('　<span style="color:var(--dim)">'+skip+' 个已经齐了（库里已有全部分集）</span>'):'');
     toast(pend?('导入完成 '+d.added+' 条；还有目录在后台扫描，稍后可再导入补齐'):('导入完成，共 '+d.added+' 条'));
     $('batchText').value='';
     SHAREPAGE=1;loadShares(1);

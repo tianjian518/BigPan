@@ -209,7 +209,9 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 			// Pending 表示这个目录后台还在扫：本次导入的是当前扫到的部分，
 			// 扫完再点一次导入会把剩下的补上（已入库的会自动跳过）。
 			Pending bool   `json:"pending,omitempty"`
-			Error   string `json:"error,omitempty"`
+			// Filled 本次是「补齐」：分享已在库里，但发现缺集，补了这么多条。
+			Filled int    `json:"filled,omitempty"`
+			Error  string `json:"error,omitempty"`
 		}
 		out := make([]res, 0, len(req.Items))
 		totalAdded := 0
@@ -237,11 +239,7 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 			}
 			rr.Title = showName
 			rr.Pending = info.Pending // 后台还在扫：本次只导当前部分
-			if shareExists(store, info.Provider, info.ShareID) {
-				rr.OK, rr.Skipped = true, true
-				out = append(out, rr)
-				continue
-			}
+
 			category, catErr := normalizeCategory(item.Category)
 			if catErr != nil {
 				rr.Error = catErr.Error()
@@ -260,44 +258,48 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 					keep[id] = true
 				}
 			}
-			// 同 apiShareAdd：剥掉分享自带的容器目录（用户给的剧名已代表这一层）
-			var bp []string
-			for _, f := range info.Files {
-				if !f.IsDir && isVideo(f.Name) {
-					bp = append(bp, f.Path)
-				}
-			}
-			shareRoot := commonShareRoot(bp)
+			shareRoot := shareRootOf(info.Files)
 			// 剧名留空 → 回退到分享顶层名（与单个导入一致）
 			if strings.TrimSpace(showFinal) == "未命名" && shareRoot != "" {
 				showFinal = safeFilename(shareRoot)
 			}
-			batch := make([]Item, 0, len(info.Files))
-			for _, f := range info.Files {
-				if f.ID == "" || f.IsDir || !isVideo(f.Name) {
-					continue
+
+			// 库里已有这个分享：不整条跳过，比对缺哪些集补进去。
+			// （v2.2.1 曾因缓存只存了第一段，用户导进去几十条；不该为此删库重导。）
+			var have map[string]bool
+			if shareExists(store, info.Provider, info.ShareID) {
+				have = map[string]bool{}
+				for _, it := range store.List() {
+					if strings.EqualFold(it.Provider, info.Provider) && it.ShareID == info.ShareID {
+						if it.FileID != "" {
+							have[it.FileID] = true
+						}
+						// 沿用库里原有的分类与剧名，别把同一个分享拆成两处
+						if category == "" && it.Category != "" {
+							category = it.Category
+						}
+						if strings.TrimSpace(showName) == "" && it.Show != "" {
+							showFinal = it.Show
+						}
+					}
 				}
-				if keep != nil && !keep[f.ID] {
-					continue
-				}
-				dir := buildItemDir(info.Provider, category, showFinal, stripShareRoot(f.Path, shareRoot))
-				ext := strings.ToLower(filepath.Ext(f.Name))
-				if ext == "" {
-					ext = strings.ToLower(filepath.Ext(f.Path))
-				}
-				title := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
-				if title == "" {
-					title = strings.TrimSuffix(filepath.Base(f.Path), filepath.Ext(f.Path))
-				}
-				batch = append(batch, Item{
-					Title: title, Dir: dir, Category: category, Show: showFinal,
-					Provider: info.Provider, ShareID: info.ShareID, Passcode: info.Passcode,
-					FileID: f.ID, FidToken: f.FidToken, ShareNumID: f.ShareNumID,
-					Ext: ext, Size: f.Size,
-				})
 			}
+
+			batch := buildShareItems(info, category, showFinal, keep, have, shareRoot)
 			if len(batch) == 0 {
-				rr.Error = "分享里没有视频文件"
+				if have != nil {
+					rr.OK, rr.Skipped = true, true // 真的齐了，没有缺集
+				} else {
+					rr.Error = "分享里没有视频文件"
+				}
+				out = append(out, rr)
+				continue
+			}
+			if have != nil {
+				added := store.AddBatch(batch)
+				totalAdded += added
+				imported++
+				rr.OK, rr.Added, rr.Filled = true, added, added
 				out = append(out, rr)
 				continue
 			}
@@ -349,4 +351,48 @@ func shareExists(store *Store, provider, shareID string) bool {
 		}
 	}
 	return false
+}
+
+// shareRootOf 算出这些视频共同的顶层目录名（分享自带的容器，如「欧美剧」）。
+func shareRootOf(files []ShareFile) string {
+	var bp []string
+	for _, f := range files {
+		if !f.IsDir && isVideo(f.Name) {
+			bp = append(bp, f.Path)
+		}
+	}
+	return commonShareRoot(bp)
+}
+
+// buildShareItems 把解析结果组装成待入库条目。
+// have 为 nil → 全新导入；非 nil → 补齐模式，只补 have 里没有的 fileID（缺的集）。
+func buildShareItems(info ShareInfo, category, showFinal string, keep, have map[string]bool, shareRoot string) []Item {
+	batch := make([]Item, 0, len(info.Files))
+	for _, f := range info.Files {
+		if f.ID == "" || f.IsDir || !isVideo(f.Name) {
+			continue
+		}
+		if keep != nil && !keep[f.ID] {
+			continue
+		}
+		if have != nil && have[f.ID] {
+			continue // 已经有了，跳过（补齐模式）
+		}
+		dir := buildItemDir(info.Provider, category, showFinal, stripShareRoot(f.Path, shareRoot))
+		ext := strings.ToLower(filepath.Ext(f.Name))
+		if ext == "" {
+			ext = strings.ToLower(filepath.Ext(f.Path))
+		}
+		title := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
+		if title == "" {
+			title = strings.TrimSuffix(filepath.Base(f.Path), filepath.Ext(f.Path))
+		}
+		batch = append(batch, Item{
+			Title: title, Dir: dir, Category: category, Show: showFinal,
+			Provider: info.Provider, ShareID: info.ShareID, Passcode: info.Passcode,
+			FileID: f.ID, FidToken: f.FidToken, ShareNumID: f.ShareNumID,
+			Ext: ext, Size: f.Size,
+		})
+	}
+	return batch
 }
