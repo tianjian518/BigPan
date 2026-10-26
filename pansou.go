@@ -33,7 +33,8 @@ import (
 type panSouConfig struct {
 	// URL PanSou 服务地址，例如 http://192.168.1.10:3005（末尾不写斜杠也行）
 	URL string `json:"url"`
-	// Limit 单次最多返回多少条（默认 60，防止一屏几千条把浏览器拖死）
+	// Limit **每个网盘**最多返回多少条（默认 40）。
+	// 注意语义：不是总数上限 —— 混在一起截断会把小网盘挤没，筛选就没货了。
 	Limit int `json:"limit"`
 	// Clouds 只搜这些网盘（空 = 全部）。值用 pansou 的云盘标识：
 	// quark / aliyun / baidu / tianyi / uc / 115 / xunlei / magnet / ed2k
@@ -45,7 +46,7 @@ type panSouConfig struct {
 var defaultPanSouClouds = []string{"quark", "baidu", "tianyi", "uc", "115", "mobile"}
 
 var (
-	panSouCfg     = panSouConfig{Limit: 60, Clouds: defaultPanSouClouds}
+	panSouCfg     = panSouConfig{Limit: 40, Clouds: defaultPanSouClouds}
 	panSouCfgPath string
 )
 
@@ -65,8 +66,8 @@ func loadPanSouConfig(path string) {
 	}
 	var c panSouConfig
 	if json.Unmarshal(b, &c) == nil {
-		if c.Limit <= 0 || c.Limit > 300 {
-			c.Limit = 60
+		if c.Limit <= 0 || c.Limit > 120 {
+			c.Limit = 40
 		}
 		if len(c.Clouds) == 0 {
 			c.Clouds = defaultPanSouClouds
@@ -163,6 +164,10 @@ func apiPanSouSearch() http.HandlerFunc {
 		}
 
 		items := make([]panSouItem, 0, 128)
+		// 按网盘分组收集：截断必须**每个网盘各自算**。
+		// 混在一起截断时夸克一家动辄上百条，会把百度/天翼挤到只剩几条，
+		// 前端按网盘筛选就直接空屏了（v2.3.0 实测）。
+		byCloud := make(map[string][]panSouItem, 8)
 		for cloud, list := range out.Data.MergedByType {
 			cn := panSouCloudCN[cloud]
 			if cn == "" {
@@ -175,7 +180,7 @@ func apiPanSouSearch() http.HandlerFunc {
 				if panSouIsEbook(it.Note) {
 					continue // 电子书/文档：影视库用不上，白白占屏
 				}
-				items = append(items, panSouItem{
+				byCloud[cloud] = append(byCloud[cloud], panSouItem{
 					Cloud: cloud, CloudCN: cn,
 					Note: strings.TrimSpace(it.Note), URL: it.URL, Password: it.Password,
 					Link:     mergeSharePwd(it.URL, it.Password),
@@ -183,15 +188,28 @@ func apiPanSouSearch() http.HandlerFunc {
 				})
 			}
 		}
-		// 新的排前面（datetime 是 "2026-10-25 12:00:00" 这种可比较字符串）
-		sort.SliceStable(items, func(i, j int) bool { return items[i].Datetime > items[j].Datetime })
-		total := len(items)
-		if lim := panSouCfg.Limit; lim > 0 && len(items) > lim {
-			items = items[:lim]
+		total := 0
+		lim := panSouCfg.Limit
+		if lim <= 0 {
+			lim = 40
 		}
+		counts := make(map[string]int, len(byCloud))
+		for cloud, list := range byCloud {
+			total += len(list)
+			// 每类内部按时间倒序（datetime 是 "2026-10-25 12:00:00" 这种可比较字符串）
+			sort.SliceStable(list, func(i, j int) bool { return list[i].Datetime > list[j].Datetime })
+			if len(list) > lim {
+				list = list[:lim]
+			}
+			counts[cloud] = len(list)
+			items = append(items, list...)
+		}
+		// 整体再按时间倒序，前端「全部」看着才顺
+		sort.SliceStable(items, func(i, j int) bool { return items[i].Datetime > items[j].Datetime })
 
 		writeJSON(w, map[string]any{
-			"ok": true, "kw": kw, "total": total, "shown": len(items), "items": items,
+			"ok": true, "kw": kw, "total": total, "shown": len(items),
+			"counts": counts, "items": items,
 		})
 	}
 }
@@ -216,8 +234,8 @@ func apiPanSouConfig() http.HandlerFunc {
 					return
 				}
 			}
-			if c.Limit <= 0 || c.Limit > 300 {
-				c.Limit = 60
+			if c.Limit <= 0 || c.Limit > 120 {
+				c.Limit = 40
 			}
 			if len(c.Clouds) == 0 {
 				c.Clouds = defaultPanSouClouds

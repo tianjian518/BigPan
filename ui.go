@@ -988,7 +988,7 @@ function dbPick(link){
   batchParse();
 }
 // ---- 资源搜索（PanSou 代理；只转发，不内置任何站点） ----
-var PSRES=[];
+var PSRES=[], PSCOUNTS={}, PSTOTAL=0, PSFILTER='';
 function psCfgLoad(){
   fetch('/api/pansou/config').then(function(r){return r.json()}).then(function(d){
     if(!d.ok)return;
@@ -1013,19 +1013,44 @@ function psGo(){
   out.innerHTML='<div class="loading"><span class="spin"></span>搜索中… PanSou 要跑上百个源，一般 5~20 秒</div>';
   fetch('/api/pansou/search?kw='+encodeURIComponent(q)).then(function(r){return r.json()}).then(function(d){
     if(!d.ok){out.innerHTML='<div class="empty"><b>搜索失败</b>'+esc(d.error||'')+'</div>';return}
-    PSRES=d.items||[];
+    PSRES=d.items||[]; PSCOUNTS=d.counts||{}; PSTOTAL=d.total||0; PSFILTER='';
+    PSRES.forEach(function(x,i){x._i=i});
     if(!PSRES.length){out.innerHTML='<div class="empty">没搜到，换个关键词试试</div>';return}
-    var h='<div class="sub" style="margin:6px 0 10px">共 '+d.total+' 条'+(d.shown<d.total?('，显示前 '+d.shown+' 条'):'')+'</div>';
-    PSRES.forEach(function(it,i){
-      h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(0,0,0,.08);border-radius:10px;margin-bottom:8px">'
-        +'<span style="flex:0 0 auto;font-size:12px;padding:2px 8px;border-radius:6px;background:rgba(42,125,42,.1);color:#2a7d2a">'+esc(it.cloud_cn)+'</span>'
-        +'<div style="flex:1;min-width:0"><div style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.note||'(无标题)')+'</div>'
-        +'<div class="sub" style="margin:2px 0 0;font-size:12px">'+esc(it.datetime||'')+(it.password?(' · 提取码 '+esc(it.password)):'')+'</div></div>'
-        +'<button class="mini" onclick="psImport('+i+')">导入</button>'
-        +'</div>';
-    });
-    out.innerHTML=h;
+    psRender();
   }).catch(function(e){out.innerHTML='<div class="empty"><b>搜索失败</b>'+esc(String(e))+'</div>'});
+}
+// 筛选条：点了只做本地过滤，不再打接口（搜索一次要十几秒，重搜太亏）
+function psPick(k){ PSFILTER=k; psRender(); }
+function psTab(k,label,n){
+  var on=(k===PSFILTER);
+  // 未选中用现成的 .gray（白底浅边框），别用 opacity —— 透明度会把按钮糊成一片看不见
+  return '<button class="mini'+(on?'':' gray')+'" onclick="psPick(\''+k+'\')"'
+    +(on?' style="background:var(--pri);color:#fff;border:1px solid var(--pri)"':'')
+    +'>'+esc(label)+' <span style="opacity:'+(on?'0.75':'0.55')+'">'+n+'</span></button>';
+}
+function psRender(){
+  var out=$('psOut'); if(!out)return;
+  var list=PSFILTER?PSRES.filter(function(x){return x.cloud===PSFILTER}):PSRES;
+  var keys=Object.keys(PSCOUNTS).sort(function(a,b){return PSCOUNTS[b]-PSCOUNTS[a]});
+  var h='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 10px">'+psTab('','全部',PSRES.length);
+  keys.forEach(function(k){
+    var cn=''; for(var i=0;i<PSRES.length;i++){ if(PSRES[i].cloud===k){cn=PSRES[i].cloud_cn;break} }
+    h+=psTab(k, cn||k, PSCOUNTS[k]);
+  });
+  h+='</div>';
+  h+='<div class="sub" style="margin:0 0 10px;font-size:12px">'
+    +(PSFILTER?('当前 '+list.length+' 条 · 全部共 '+PSTOTAL+' 条'):('共 '+PSTOTAL+' 条'+(PSRES.length<PSTOTAL?('，显示前 '+PSRES.length+' 条（每个网盘各取一部分）'):'')))
+    +'</div>';
+  if(!list.length){ h+='<div class="empty">这个网盘这次没有结果</div>'; out.innerHTML=h; return; }
+  list.forEach(function(it){
+    h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(0,0,0,.08);border-radius:10px;margin-bottom:8px">'
+      +'<span style="flex:0 0 auto;font-size:12px;padding:2px 8px;border-radius:6px;background:rgba(42,125,42,.1);color:#2a7d2a">'+esc(it.cloud_cn)+'</span>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.note||'(无标题)')+'</div>'
+      +'<div class="sub" style="margin:2px 0 0;font-size:12px">'+esc(it.datetime||'')+(it.password?(' · 提取码 '+esc(it.password)):'')+'</div></div>'
+      +'<button class="mini" onclick="psImport('+it._i+')">导入</button>'
+      +'</div>';
+  });
+  out.innerHTML=h;
 }
 function psImport(i){
   var it=PSRES[i]; if(!it)return;

@@ -109,3 +109,74 @@ func containsStr(s, sub string) bool {
 		return false
 	})()
 }
+
+// 截断必须按网盘各自算：夸克上百条不能把百度/天翼挤没，否则前端筛选空屏。
+func TestPanSouPerCloudLimit(t *testing.T) {
+	quark := make([]map[string]any, 0, 20)
+	for i := 0; i < 20; i++ {
+		quark = append(quark, map[string]any{
+			"url":      "https://pan.quark.cn/s/q" + string(rune('a'+i)),
+			"note":     "庆余年 夸克",
+			"datetime": "2026-10-20 10:00:00",
+		})
+	}
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"code": 200,
+			"data": map[string]any{
+				"total": 22,
+				"merged_by_type": map[string]any{
+					"quark": quark,
+					"baidu": []map[string]any{
+						{"url": "https://pan.baidu.com/s/b1", "note": "庆余年 百度1", "datetime": "2026-10-21 10:00:00"},
+						{"url": "https://pan.baidu.com/s/b2", "note": "庆余年 百度2", "datetime": "2026-10-19 10:00:00"},
+					},
+				},
+			},
+		})
+	}))
+	defer fake.Close()
+
+	old := panSouCfg
+	defer func() { panSouCfg = old }()
+	panSouCfg = panSouConfig{URL: fake.URL, Limit: 5} // 每类只要 5 条
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/pansou/search?kw=庆余年", nil)
+	apiPanSouSearch()(rec, req)
+
+	var out struct {
+		OK     bool           `json:"ok"`
+		Total  int            `json:"total"`
+		Shown  int            `json:"shown"`
+		Counts map[string]int `json:"counts"`
+		Items  []panSouItem   `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("响应不是 JSON：%s", rec.Body.String())
+	}
+	if !out.OK {
+		t.Fatalf("ok=false：%s", rec.Body.String())
+	}
+	// total 是过滤后的真实总数（22），shown 是截断后的 5+2
+	if out.Total != 22 {
+		t.Errorf("total=%d，应为 22", out.Total)
+	}
+	if out.Shown != 7 || len(out.Items) != 7 {
+		t.Fatalf("shown=%d items=%d，应为 7（夸克 5 + 百度 2）", out.Shown, len(out.Items))
+	}
+	if out.Counts["quark"] != 5 || out.Counts["baidu"] != 2 {
+		t.Errorf("counts=%v，应为 quark:5 baidu:2", out.Counts)
+	}
+	// 百度两条必须都在（没被夸克挤掉）
+	nb := 0
+	for _, it := range out.Items {
+		if it.Cloud == "baidu" {
+			nb++
+		}
+	}
+	if nb != 2 {
+		t.Errorf("百度只留下 %d 条，应 2 条", nb)
+	}
+}
