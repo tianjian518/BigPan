@@ -1584,6 +1584,8 @@ func main() {
 	}
 	// STRM 导出设置（与 items.json 同目录，网页可改）
 	loadSTRMConfig(filepath.Join(filepath.Dir(*flagData), "strm_config.json"))
+	// 资源搜索（PanSou）设置：地址为空 = 关闭，前端不显示入口
+	loadPanSouConfig(filepath.Join(filepath.Dir(*flagData), "pansou_config.json"))
 
 	store, err := NewStore(*flagData)
 	if err != nil {
@@ -1699,6 +1701,9 @@ func main() {
 	// STRM 导出：把虚拟盘镜像成 /data/strm 下的 .strm 目录树（飞牛影视媒体库用）
 	mux.HandleFunc("/api/strm/rebuild", requireAuth(apiSTRMRebuild(store, self)))
 	mux.HandleFunc("/api/strm/config", requireAuth(apiSTRMConfig(store, self)))
+	// 资源搜索（PanSou 代理）：只做转发，不碰导入/播放
+	mux.HandleFunc("/api/pansou/search", requireAuth(apiPanSouSearch()))
+	mux.HandleFunc("/api/pansou/config", requireAuth(apiPanSouConfig()))
 	mux.HandleFunc("/api/accounts/import", requireAuth(apiAccountImport(as)))
 	mux.HandleFunc("/api/accounts/label", requireAuth(apiAccountLabel(as)))
 	mux.HandleFunc("/api/doubao/browse", requireAuth(apiDoubaoBrowse(as)))

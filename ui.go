@@ -386,6 +386,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
       <a data-p="home" class="on"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg><span>概览</span></a>
       <div class="grp">资源</div>
       <a data-p="import"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4.5-4.5M12 15 7.5 10.5"/><path d="M4 16.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5"/></svg><span>分享导入</span></a>
+      <a data-p="search"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>资源搜索</span></a>
       <a data-p="tianyi-sub"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H12l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5Z"/><path d="M8.5 8.5h7M8.5 11.5h4.5"/></svg><span>天翼订阅</span></a>
       <a data-p="doubao"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5c4.7 0 8.5 3.4 8.5 7.6 0 4.2-3.8 7.6-8.5 7.6-1 0-2-.14-2.9-.4L5 20.5l1.1-3.6C4.4 15.4 3.5 13.4 3.5 11.1 3.5 6.9 7.3 3.5 12 3.5Z"/><circle cx="9" cy="10.5" r="1"/><circle cx="15" cy="10.5" r="1"/></svg><span>豆包盘</span></a>
       <a data-p="lib"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7.5 4v16M16.5 4v16M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21"/></svg><span>媒体库</span></a>
@@ -447,6 +448,25 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <div class="sub" id="healthTip" style="margin:10px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
       </div>
     </div>
+    <div id="pg-search" style="display:none">
+      <div class="pagehd"><h2>资源搜索</h2><span class="sub">从 PanSou 搜全网盘分享，点「导入」直接进分享导入流程</span></div>
+      <div class="card">
+        <div class="srch" style="margin-bottom:10px">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" id="psQ" placeholder="搜剧名 / 片名，回车搜索" onkeydown="if(event.key==='Enter')psGo()">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button onclick="psGo()">搜索</button>
+          <span id="psCfgMsg" class="sub" style="margin:0"></span>
+          <span style="flex:1"></span>
+          <input id="psUrl" placeholder="PanSou 地址，如 http://127.0.0.1:3005" style="width:270px;font-size:13px" onkeydown="if(event.key==='Enter')psSaveCfg()">
+          <button class="mini gray" onclick="psSaveCfg()">保存地址</button>
+        </div>
+        <div class="sub" style="margin-top:8px">本项目只做搜索转发，不内置任何资源站点：地址留空即关闭，不请求任何外部服务。搜到的链接点「导入」会走和手动粘贴完全相同的解析/入库流程。</div>
+      </div>
+      <div id="psOut"></div>
+    </div>
+
     <div id="pg-tianyi-sub" style="display:none">
       <div class="pagehd"><h2>天翼订阅</h2><span class="sub">盯住资源号，新分享自动收进虚拟盘</span></div>
       <div class="card">
@@ -663,7 +683,7 @@ function cleanShow(s){
 }
 function toast(m){var t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('show')},2200)}
 function humanSize(n){if(!n||n<=0)return '0 B';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?2:0)+' '+u[i]}
-var PAGES=['home','import','tianyi-sub','doubao','lib','set'];
+var PAGES=['home','import','search','tianyi-sub','doubao','lib','set'];
 function nav(p){
   PAGES.forEach(function(x){
     var el=$('pg-'+x);
@@ -677,6 +697,7 @@ function nav(p){
   if(p==='home')loadAccNames(loadHome);
   if(p==='lib')loadAccNames(loadLib);
   if(p==='set')loadSet(); if(p==='import')loadShares();
+  if(p==='search')psCfgLoad();
   if(p==='tianyi-sub'){loadTianyiSubs();tsBfPoll(false);}
   if(p==='doubao')paintDoubao();
 }
@@ -966,6 +987,51 @@ function dbPick(link){
   toast('正在解析，大目录要几分钟，别关页面');
   batchParse();
 }
+// ---- 资源搜索（PanSou 代理；只转发，不内置任何站点） ----
+var PSRES=[];
+function psCfgLoad(){
+  fetch('/api/pansou/config').then(function(r){return r.json()}).then(function(d){
+    if(!d.ok)return;
+    var c=d.config||{};
+    var el=$('psUrl'); if(el)el.value=c.url||'';
+    var m=$('psCfgMsg'); if(m)m.textContent=c.url?('已连接：'+c.url):'未配置地址（搜索不可用）';
+  }).catch(function(){});
+}
+function psSaveCfg(){
+  var el=$('psUrl'); var url=el?el.value:'';
+  fetch('/api/pansou/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({url:(url||'').trim(),limit:60})}).then(function(r){return r.json()}).then(function(d){
+      if(!d.ok){toast(d.error||'保存失败');return}
+      var m=$('psCfgMsg'); if(m)m.textContent=d.config.url?('已连接：'+d.config.url):'已关闭（地址为空）';
+      toast('已保存');
+    }).catch(function(){toast('保存失败')});
+}
+function psGo(){
+  var qe=$('psQ'); var q=qe?(qe.value||'').trim():'';
+  var out=$('psOut'); if(!out)return;
+  if(!q){toast('先输关键词');return}
+  out.innerHTML='<div class="loading"><span class="spin"></span>搜索中… PanSou 要跑上百个源，一般 5~20 秒</div>';
+  fetch('/api/pansou/search?kw='+encodeURIComponent(q)).then(function(r){return r.json()}).then(function(d){
+    if(!d.ok){out.innerHTML='<div class="empty"><b>搜索失败</b>'+esc(d.error||'')+'</div>';return}
+    PSRES=d.items||[];
+    if(!PSRES.length){out.innerHTML='<div class="empty">没搜到，换个关键词试试</div>';return}
+    var h='<div class="sub" style="margin:6px 0 10px">共 '+d.total+' 条'+(d.shown<d.total?('，显示前 '+d.shown+' 条'):'')+'</div>';
+    PSRES.forEach(function(it,i){
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(0,0,0,.08);border-radius:10px;margin-bottom:8px">'
+        +'<span style="flex:0 0 auto;font-size:12px;padding:2px 8px;border-radius:6px;background:rgba(42,125,42,.1);color:#2a7d2a">'+esc(it.cloud_cn)+'</span>'
+        +'<div style="flex:1;min-width:0"><div style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.note||'(无标题)')+'</div>'
+        +'<div class="sub" style="margin:2px 0 0;font-size:12px">'+esc(it.datetime||'')+(it.password?(' · 提取码 '+esc(it.password)):'')+'</div></div>'
+        +'<button class="mini" onclick="psImport('+i+')">导入</button>'
+        +'</div>';
+    });
+    out.innerHTML=h;
+  }).catch(function(e){out.innerHTML='<div class="empty"><b>搜索失败</b>'+esc(String(e))+'</div>'});
+}
+function psImport(i){
+  var it=PSRES[i]; if(!it)return;
+  dbPick(it.link);   // 复用现有导入：填链接 → 切到导入页 → 解析
+}
+
 function batchParse(){
   var links=batchSplit($('batchText').value);
   if(!links.length){toast('没识别到链接，一行一条，以 http 开头');return}
