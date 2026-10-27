@@ -433,7 +433,7 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
     <div id="pg-import" style="display:none">
       <div class="pagehd"><h2>分享导入</h2><span class="sub">粘贴链接 → 按目录树收进虚拟盘 → 自动追更</span></div>
       <div class="card">
-        <div class="chd"><b>粘贴分享链接</b><span class="csub">一条多条都行，一行一条，可混着粘</span></div>
+        <div class="chd"><b>粘贴分享链接</b><span class="csub">一条多条都行，一行一条，可混着粘 · <b style="color:var(--txt)">只想导其中某个目录？去「豆包盘」页粘链接，点哪个导哪个</b></span></div>
         <textarea id="batchText" placeholder="https://cloud.189.cn/t/xxxx（访问码：abcd）&#10;https://pan.quark.cn/s/xxxx&#10;https://pan.baidu.com/s/xxxx?pwd=abcd" style="width:100%;height:104px;margin-top:10px;box-sizing:border-box;font-size:13px;line-height:1.6;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--fg)"></textarea>
         <div class="row" style="margin-top:10px;gap:10px;align-items:center;flex-wrap:wrap">
           <button onclick="batchParse()">解析</button>
@@ -498,6 +498,14 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <div class="chd"><b>账号</b><span class="csub">每个豆包号单独连，文件、条目、播放全互不干扰</span></div>
         <div id="dbAccts" style="margin-top:6px"><div class="loading"><span class="spin"></span>读取中…</div></div>
         <div class="sub" style="margin-top:10px">Cookie 只认 <b>sessionid</b>，约 30 天有效，过期重粘一次。连上后点「浏览」进自己的网盘挑目录，<b>不需要分享链接、不会被删</b>。</div>
+      </div>
+      <div class="card">
+        <div class="chd"><b>别人的分享</b><span class="csub">粘老链接（/drive/s/），进来挑目录导，不用登他的号</span></div>
+        <div class="row" style="margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="dbShareLink" placeholder="https://www.doubao.com/drive/s/xxxxxxxx" style="flex:1;min-width:220px" onkeydown="if(event.key==='Enter')dbOpenShare()">
+          <button onclick="dbOpenShare()">浏览目录</button>
+        </div>
+        <div class="sub" style="margin-top:8px">读的还是你自己的豆包账号：看到的是这个分享里的目录，<b>点哪个导哪个</b>，不会把整条链接塞进一个总文件夹。</div>
       </div>
       <div class="card" id="dbPane" style="display:none">
         <div class="chd"><b id="dbPaneName">浏览</b><span class="csub" id="dbCrumb">根目录</span></div>
@@ -901,6 +909,8 @@ function batchSplit(text){
 
 // ---- 豆包盘：账号列表 + 浏览（伪链接 doubao://<槽位>/<node_id>）----
 var DB_STACK=[], DB_SLOT='doubao1', DB_NAMES={};
+// DB_SHARE 非空 = 正在浏览别人的老分享（/drive/s/）。读自己账号的 Cookie，看分享里的目录。
+var DB_SHARE=null;
 
 // 给豆包账号起别名。豆包官方没有任何用户信息接口，自动标识只有 uid 短码，
 // 4 个号光看「豆包1/2/3/4」分不清，所以允许自己命名（留空恢复自动）。
@@ -950,40 +960,94 @@ function paintDoubao(){
   }).catch(function(){ $('dbAccts').innerHTML='<div class="sub">读取失败，刷新页面试试</div>' });
 }
 function dbOpenFor(pv){
-  DB_SLOT=pv; DB_STACK=[];
+  DB_SLOT=pv; DB_STACK=[]; DB_SHARE=null;
   $('dbPane').style.display='';
   $('dbPaneName').textContent=DB_NAMES[pv]||PVCN[pv]||pv;
   dbGo('');
 }
-function dbClosePane(){ $('dbPane').style.display='none'; $('dbPane').dataset.userClosed='1'; }
+function dbOpenShare(){
+  var l=($('dbShareLink')?$('dbShareLink').value:'').trim();
+  if(!l){toast('先粘贴豆包分享链接（/drive/s/…）');return}
+  DB_SHARE={link:l,stack:[]};
+  $('dbPane').style.display='';
+  $('dbPaneName').textContent='别人的分享';
+  $('dbPane').dataset.userClosed='';
+  dbGo('');
+}
+function dbClosePane(){ $('dbPane').style.display='none'; $('dbPane').dataset.userClosed='1'; DB_SHARE=null; }
+function dbCurStack(){ return DB_SHARE?DB_SHARE.stack:DB_STACK }
 function dbUp(){
-  if(DB_STACK.length<=1){ dbGo(''); return; }
-  DB_STACK.pop();
-  dbGo(DB_STACK[DB_STACK.length-1].id);
+  var st=dbCurStack();
+  if(st.length<=1){ dbGo(''); return; }
+  st.pop();
+  dbGo(st[st.length-1].id);
 }
 function dbGo(nodeId){
-  if(!nodeId)DB_STACK=[];
+  var st=dbCurStack();
+  if(!nodeId)st.length=0;
   $('dbList').innerHTML='<div class="loading"><span class="spin"></span>读取中…</div>';
-  fetch('/api/doubao/browse?provider='+encodeURIComponent(DB_SLOT)+'&node_id='+encodeURIComponent(nodeId||''))
+  var url=DB_SHARE
+    ? ('/api/doubao/share/ls?link='+encodeURIComponent(DB_SHARE.link)
+       +'&node_id='+encodeURIComponent(nodeId||'')
+       +'&path='+encodeURIComponent(st.map(function(x){return x.name}).join('/')))
+    : ('/api/doubao/browse?provider='+encodeURIComponent(DB_SLOT)+'&node_id='+encodeURIComponent(nodeId||''));
+  fetch(url)
    .then(function(r){return r.json()}).then(function(d){
      if(!d.ok){ $('dbList').innerHTML='<div class="sub">'+esc(d.error||'读取失败')+'</div>'; return; }
-     var path=DB_STACK.map(function(x){return x.name}).join(' / ')||'根目录';
-     $('dbCrumb').textContent=path;
+     var pth=(d.path||st.map(function(x){return x.name}).join(' / '))||'根目录';
+     $('dbCrumb').textContent=(DB_SHARE?'分享：':'')+pth;
      var t='';
      (d.items||[]).forEach(function(it){
        t+='<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line)">';
        t+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.is_dir?'📁 ':(it.video?'🎬 ':'📄 '))+esc(it.name)+'</span>';
-       t+='<span class="sub" style="white-space:nowrap">'+(it.is_dir?'':humanSize(it.size))+'</span>';
+       t+='<span class="sub" style="white-space:nowrap">'+(it.is_dir?(it.children?it.children+' 项':''):humanSize(it.size))+'</span>';
        if(it.is_dir){
          t+='<button class="mini" onclick="dbEnter(\''+escA(it.id)+'\',\''+encodeURIComponent(it.name)+'\')">进入</button>';
-         t+='<button class="mini gray" onclick="dbPick(\''+escA(it.link)+'\')">导入此目录</button>';
+         if(DB_SHARE){
+           // 分享模式：直接导这个目录（只扫这棵子树），不用先跳去解析整条链接
+           t+='<button class="mini '+(it.imported?'gray':'')+'" onclick="dbImportShare(\''+escA(it.node_id)+'\',\''+encodeURIComponent(it.path)+'\',\''+encodeURIComponent(it.name)+'\')">'
+             +(it.imported?'再导·补缺':'导入此目录')+'</button>';
+         }else{
+           t+='<button class="mini gray" onclick="dbPick(\''+escA(it.link)+'\')">导入此目录</button>';
+         }
        }
        t+='</div>';
      });
      $('dbList').innerHTML=t||('<div class="sub">这个目录返回 0 项'+(nodeId?('（node_id='+esc(nodeId)+'）'):'')+'</div>');
    }).catch(function(){ $('dbList').innerHTML='<div class="sub">读取失败，检查 Cookie 是否过期</div>' });
 }
-function dbEnter(id,name){ DB_STACK.push({id:id,name:decodeURIComponent(name)}); dbGo(id); }
+function dbEnter(id,name){ dbCurStack().push({id:id,name:decodeURIComponent(name)}); dbGo(id); }
+// 分享模式：只导入点中的这个目录（扫的是子树，不是整条链接）
+function dbImportShare(nodeID,encPath,encName){
+  if(!DB_SHARE)return;
+  var pth=decodeURIComponent(encPath), nm=decodeURIComponent(encName);
+  var round=0, added=0, total=0;
+  function step(){
+    round++;
+    fetch('/api/doubao/share/import',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({link:DB_SHARE.link,node_id:nodeID,path:pth})})
+    .then(function(r){return r.json()}).then(function(d){
+      if(!d.ok){
+        if(d.pending&&round<40){ setTimeout(step,1200); return }
+        toast(d.error||'导入失败'); return
+      }
+      added+=d.added||0; total=d.total||total;
+      if(d.pending&&round<40){
+        toast('正在扫「'+nm+'」：已扫 '+total+' 个视频，入库 '+added+' 条…');
+        setTimeout(step,1200); return
+      }
+      toast('「'+nm+'」导入完成：'+added+' 条'+(d.pending?'（还没扫完，再点一次接着扫）':''));
+      loadItems(function(){ dbReload(); });
+    }).catch(function(){ toast('导入失败，网络异常') });
+  }
+  toast('开始导入「'+nm+'」，文件多时要一会儿…');
+  step();
+}
+function dbReload(){
+  var st=dbCurStack();
+  var id=st.length?st[st.length-1].id:'';
+  dbGo(id);
+}
 function dbPick(link){
   $('batchText').value=link;
   nav('import');
@@ -1264,7 +1328,7 @@ function bApplyAllDo(c1,c2){
   if(!c1)c2='';
   var n=0;
   BATCH_ROWS.forEach(function(r){
-    if(!r.ok||r.exists)return;
+    if(!r.ok)return; // 已导入过的也允许再导：后端只补缺的集（换个子目录导就是靠这个）
     r.cat1=c1;r.cat2=c2;n++;
   });
   renderBatchRows();
@@ -1287,7 +1351,9 @@ function renderBatchRows(){
    +'<th style="padding:6px 4px;width:96px">状态</th></tr></thead><tbody>';
 
   BATCH_ROWS.forEach(function(r,i){
-    var editable=(r.ok&&!r.exists);
+    // 已导入过的行也给编辑：老分享常需要「先导电视剧、过几天再导电影」，
+    // 第二次得能换个目录名/分类再导，后端只补缺的集。
+    var editable=!!r.ok;
     h+='<tr style="border-top:1px solid var(--line);vertical-align:top">';
     // 剧名
     h+='<td style="padding:7px 6px 7px 0">';
@@ -1321,7 +1387,7 @@ function renderBatchRows(){
     // 状态。错误里可能带换行（比如断点续扫的说明），要转成 br 才看得清
     h+='<td style="padding:7px 4px">';
     if(!r.ok){h+='<span class="tag err">失败</span><div class="cd" style="font-size:11px;margin-top:3px;line-height:1.5" title="'+escA(r.error||'')+'">'+esc(r.error||'').replace(/\n/g,'<br>')+'</div>';}
-    else if(r.exists){h+='<span class="tag off">已导入过</span>';}
+    else if(r.exists){h+='<span class="tag off" title="再点「开始导入」只会补库里没有的集，已有的不动">已导入·补缺</span>';}
     else {h+='<span class="tag ok">待导入</span>';}
     h+='</td></tr>';
     // 展开的文件勾选行
@@ -1360,14 +1426,14 @@ function renderBatchRows(){
 function batchAdd(){
   var items=[];
   BATCH_ROWS.forEach(function(r){
-    if(!r.ok||r.exists)return;
+    if(!r.ok)return; // 已导入过的也允许再导：后端只补缺的集（换个子目录导就是靠这个）
     var ids=[];
     (r.files||[]).forEach(function(f){if(r.sel[f.id])ids.push(f.id)});
     if(!ids.length)return;
     items.push({provider:r.provider,share_id:r.share_id,category:bCatOf(r),
       title:(r.title||'').trim(),files:ids});
   });
-  if(!items.length){toast('没有可导入的分享（检查是不是都已在库里，或文件全被取消勾选）');return}
+  if(!items.length){toast('没有可导入的文件（可能全被取消勾选了）');return}
   var msg=$('batchMsg');
   if(msg)msg.innerHTML='<span class="spin"></span>导入中：共 '+items.length+' 个分享…';
   fetch('/api/share/batch/add',{method:'POST',headers:{'Content-Type':'application/json'},

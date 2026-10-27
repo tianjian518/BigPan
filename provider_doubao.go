@@ -22,10 +22,12 @@ package main
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -646,5 +648,314 @@ func apiDoubaoBrowse(as *AccountStore) http.HandlerFunc {
 		writeJSON(w, map[string]interface{}{
 			"ok": true, "provider": pv, "root_id": rootID, "node_id": nodeID, "items": items,
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 按目录导入（老分享）：像天翼订阅号那样 —— 先秒开目录列表，再挑一个导
+//
+// 老分享（/drive/s/xxx）常是一个大合集：根下是「电视剧」「电影」「动漫」…
+// 整条导进去只能落成一个总文件夹。这里改成两步：
+//   ① 只列 1~2 层目录（2 个请求，1 秒内出结果）；
+//   ② 点哪个目录才扫哪个子树（几十个目录，几十秒），落成 豆包1/电视剧/剧名/…
+// ---------------------------------------------------------------------------
+
+// scanDoubaoShareNode 只扫分享里的某个子目录（不扫全树）。
+// prefix 是该目录在分享内的完整路径（如「芦苇豆包/电视剧」），拼文件 Path 用。
+func scanDoubaoShareNode(cli *Doubao, slot, shareID, nodeID, prefix string, budget time.Duration) ([]ShareFile, bool, error) {
+	type job = dbScanJob
+	key := "snode|" + slot + "|" + shareID + "|" + nodeID
+	st := dbScanTake(key)
+
+	seen := make(map[string]bool, len(st.Seen)+64)
+	for _, id := range st.Seen {
+		seen[id] = true
+	}
+	queue := append([]job(nil), st.Queue...)
+	if len(queue) == 0 && len(seen) == 0 {
+		queue = append(queue, job{ID: nodeID, Prefix: prefix})
+		seen[nodeID] = true
+	}
+	files := st.Files
+
+	snapshot := func() *dbScanState {
+		ids := make([]string, 0, len(seen))
+		for id := range seen {
+			ids = append(ids, id)
+		}
+		return &dbScanState{
+			Key: key, Title: prefix, Queue: append([]job(nil), queue...),
+			Seen: ids, Files: files,
+		}
+	}
+
+	start := time.Now()
+	deadline := start.Add(budget)
+	dirty := 0
+	for len(queue) > 0 && len(files) < 20000 && len(seen) < 5000 {
+		if budget > 0 && time.Now().After(deadline) {
+			dbScanPut(snapshot())
+			log.Printf("[豆包] 子目录分段返回：%s 已扫 %d 个目录 / %d 个视频", prefix, len(seen), len(files))
+			return files, true, nil
+		}
+		j := queue[0]
+		queue = queue[1:]
+		list, err := cli.dbShareListDir(shareID, j.ID)
+		if err != nil {
+			queue = append([]job{j}, queue...) // 正在扫的这个不能丢
+			dbScanPut(snapshot())
+			return files, false, fmt.Errorf("豆包限流了（请求太密，不是文件出错）。已扫到 %d 个目录 / %d 个视频，进度已保存。\n等 3~5 分钟再点一次「导入」，会从这里接着扫。\n原始信息：%w",
+				len(seen), len(files), err)
+		}
+		for _, n := range list {
+			p := n.Name
+			if j.Prefix != "" {
+				p = j.Prefix + "/" + n.Name
+			}
+			if n.IsDir() {
+				if !seen[n.ID] {
+					seen[n.ID] = true
+					queue = append(queue, job{ID: n.ID, Prefix: p})
+				}
+				continue
+			}
+			if isVideo(n.Name) {
+				files = append(files, ShareFile{
+					ID: n.ID, Name: n.Name, Size: n.Size, Path: p, Code: shareID, FidToken: n.Key,
+				})
+			}
+		}
+		if dirty++; dirty >= 30 {
+			dirty = 0
+			dbScanPut(snapshot())
+		}
+	}
+	dbScanDone(key)
+	log.Printf("[豆包] 子目录扫描完成：%s，%d 个目录 / %d 个视频 / 耗时 %v",
+		prefix, len(seen), len(files), time.Since(start).Round(time.Second))
+	return files, false, nil
+}
+
+// doubaoShareItem 浏览别人分享时的一行（目录或文件）。
+type doubaoShareItem struct {
+	Name     string `json:"name"`
+	ID       string `json:"node_id"`
+	Path     string `json:"path"` // 分享内的完整路径（含容器层）
+	IsDir    bool   `json:"is_dir"`
+	Video    bool   `json:"video"`
+	Size     int64  `json:"size"`
+	Children int    `json:"children,omitempty"` // 目录：直接子项数（不深扫，快）
+	Imported bool   `json:"imported,omitempty"` // 媒体库里已经有这个目录的条目
+}
+
+// apiDoubaoShareLS GET /api/doubao/share/ls?link=&node_id=&path=
+// 浏览别人的老分享（/drive/s/），跟浏览自己盘一样逐层点。
+// node_id 为空 = 看分享根（只有一层容器时自动下探，省一次点击）。
+func apiDoubaoShareLS(store *Store, as *AccountStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		link := strings.TrimSpace(r.URL.Query().Get("link"))
+		nodeID := strings.TrimSpace(r.URL.Query().Get("node_id"))
+		path := strings.Trim(filepath.ToSlash(strings.TrimSpace(r.URL.Query().Get("path"))), "/")
+
+		p := findProvider(link)
+		dp, ok := p.(doubaoProvider)
+		if !ok {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "这不是豆包分享链接"})
+			return
+		}
+		shareID, err := parseDoubaoLink(link)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		if strings.HasPrefix(shareID, doubaoShrPrefix) {
+			writeJSON(w, map[string]interface{}{
+				"ok": false,
+				"error": "这是新格式分享（/drive/shr/），直接粘到「分享导入」页就行；" +
+					"这里浏览的是老的 /drive/s/ 链接",
+			})
+			return
+		}
+		cli := dp.client(as)
+		if cli == nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": providerCN(dp.Name()) + " 还没粘 Cookie"})
+			return
+		}
+
+		title := path
+		var nodes []dbNode
+		if nodeID == "" {
+			var e error
+			title, nodes, e = cli.dbShareOverview(shareID)
+			if e != nil {
+				writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+				return
+			}
+			// 分享根常是一层容器（如「芦苇豆包」）：只有一个目录时直接下探，
+			// 用户点进来就能看见 电视剧/电影/动漫。
+			for i := 0; i < 2; i++ {
+				dirs, videos := 0, 0
+				var only dbNode
+				for _, n := range nodes {
+					if n.IsDir() {
+						dirs++
+						only = n
+					} else if isVideo(n.Name) {
+						videos++
+					}
+				}
+				if dirs != 1 || videos != 0 {
+					break
+				}
+				kids, e := cli.dbShareListDir(shareID, only.ID)
+				if e != nil {
+					break
+				}
+				if path == "" {
+					path = only.Name
+				} else {
+					path += "/" + only.Name
+				}
+				nodes = kids
+			}
+		} else {
+			nodes, err = cli.dbShareListDir(shareID, nodeID)
+			if err != nil {
+				writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+				return
+			}
+		}
+
+		base := providerCN(dp.Name())
+		items := make([]doubaoShareItem, 0, len(nodes))
+		for _, n := range nodes {
+			pth := n.Name
+			if path != "" {
+				pth = path + "/" + n.Name
+			}
+			it := doubaoShareItem{
+				Name: n.Name, ID: n.ID, Path: pth,
+				IsDir: n.IsDir(), Size: n.Size,
+			}
+			if n.IsDir() {
+				if kids, e := cli.dbShareListDir(shareID, n.ID); e == nil {
+					it.Children = len(kids)
+				}
+				it.Imported = libHasDir(store, base, n.Name)
+			} else {
+				it.Video = isVideo(n.Name)
+			}
+			items = append(items, it)
+		}
+		writeJSON(w, map[string]interface{}{
+			"ok": true, "provider": dp.Name(), "share_id": shareID,
+			"title": title, "path": path, "node_id": nodeID, "items": items,
+		})
+	}
+}
+
+// libHasDir 媒体库里是否已有「网盘/这个目录名」下的条目。
+func libHasDir(store *Store, providerName, dir string) bool {
+	if store == nil {
+		return false
+	}
+	want := providerName + "/" + safeFilename(dir) + "/"
+	for _, it := range store.List() {
+		if strings.HasPrefix(it.Dir+"/", want) {
+			return true
+		}
+	}
+	return false
+}
+
+// apiDoubaoShareImport POST {link,node_id,path,category?} → 只导这一个子目录。
+// 分段扫：本次扫 45 秒就返回 pending，前端再点/自动续，进度已落盘。
+func apiDoubaoShareImport(store *Store, as *AccountStore, self string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Link     string `json:"link"`
+			NodeID   string `json:"node_id"`
+			Path     string `json:"path"`
+			Category string `json:"category"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NodeID == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "参数错误"})
+			return
+		}
+		p := findProvider(strings.TrimSpace(req.Link))
+		dp, ok := p.(doubaoProvider)
+		if !ok {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "这不是豆包分享链接"})
+			return
+		}
+		shareID, err := parseDoubaoLink(strings.TrimSpace(req.Link))
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		cli := dp.client(as)
+		if cli == nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": providerCN(dp.Name()) + " 还没粘 Cookie"})
+			return
+		}
+		cat, catErr := normalizeCategory(req.Category)
+		if catErr != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": catErr.Error()})
+			return
+		}
+		prefix := strings.Trim(filepath.ToSlash(strings.TrimSpace(req.Path)), "/")
+		files, pending, err := scanDoubaoShareNode(cli, dp.Name(), shareID, req.NodeID, prefix, 45*time.Second)
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error(), "pending": false})
+			return
+		}
+		name := prefix
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
+		}
+		title := safeFilename(stripScrape(cleanShareTitle(name)))
+		if title == "" {
+			title = "未命名"
+		}
+		if len(files) == 0 {
+			writeJSON(w, map[string]interface{}{
+				"ok": false, "pending": pending, "total": 0,
+				"error": "这个目录里还没扫到视频" + map[bool]string{true: "（后台还在扫，再点一次继续）", false: ""}[pending],
+			})
+			return
+		}
+		info := ShareInfo{Provider: dp.Name(), ShareID: shareID, Title: title, Files: files}
+		root := shareRootOf(files)
+		// 已导入过这个分享：只补缺的集（同一目录再点一次不会重复）
+		var have map[string]bool
+		if shareExists(store, dp.Name(), shareID) {
+			have = map[string]bool{}
+			for _, it := range store.List() {
+				if strings.EqualFold(it.Provider, dp.Name()) && it.ShareID == shareID && it.FileID != "" {
+					have[it.FileID] = true
+				}
+			}
+		}
+		batch := buildShareItems(info, cat, title, nil, have, root)
+		added := store.AddBatch(batch)
+		if globalShares != nil {
+			globalShares.Put(ShareMeta{
+				Provider: dp.Name(), ShareID: shareID, Passcode: "", Category: cat, Show: title,
+				Node: req.NodeID, Prefix: prefix,
+				// 不自动追更（定时全量重扫没必要）；手动点「刷新」时按 Node 只扫这棵子树。
+				AutoRefresh: false,
+			})
+		}
+		log.Printf("[按目录导入] %s/%s ← %s：本次 %d 个视频，入库 %d 条%s",
+			dp.Name(), title, prefix, len(files), added, map[bool]string{true: "（还在扫）", false: ""}[pending])
+		writeJSON(w, map[string]interface{}{
+			"ok": true, "added": added, "total": len(files),
+			"pending": pending, "title": title,
+		})
+		// 分段扫时前端会自动续调（可能十几轮），每轮都重建 = 反复写盘。
+		// 只在最后一段扫完时重建一次；中途关页面的话，下次导入/手动重建会补上。
+		if added > 0 && !pending {
+			rebuildSTRMAsync(store, self, "按目录导入")
+		}
 	}
 }

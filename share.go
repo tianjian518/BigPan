@@ -818,9 +818,25 @@ func refreshShareOnce(store *Store, provider, shareID, passcode, category string
 	if p == nil {
 		return "", 0, 0, fmt.Errorf("不支持的网盘: %s", provider)
 	}
-	title, files, err := p.RefreshShare(shareID, passcode)
-	if err != nil {
-		return "", 0, 0, err
+	var title string
+	var files []ShareFile
+	// 按目录导入的登记：只重扫那棵子树。整树重扫会把别的目录（电影/动漫）
+	// 的文件也带进来 —— 用户明明只导了电视剧，刷新一次却多出一堆电影。
+	// 【2026-10-27】同时支持两种来源：分享页的整分享登记（没有 Node），
+	// 和豆包盘页「导入此目录」产生的子目录登记（有 Node + Prefix）。
+	if m := shareMetaFor(store, provider, shareID); m.Node != "" {
+		if dp, ok := p.(doubaoProvider); ok {
+			if cli := dp.client(globalAccounts); cli != nil {
+				files, _, err = scanDoubaoShareNode(cli, provider, shareID, m.Node, m.Prefix, 0)
+				title = m.Show
+			}
+		}
+	}
+	if files == nil {
+		title, files, err = p.RefreshShare(shareID, passcode)
+		if err != nil {
+			return "", 0, 0, err
+		}
 	}
 	// 分类与剧名沿用已入库条目记录的值 —— 用户手工改过名、设过分类都保持不变，
 	// 路径稳定，播放器缓存才不会失效。显式传入的 category 优先。

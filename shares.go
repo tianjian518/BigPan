@@ -18,6 +18,10 @@ import (
 type ShareMeta struct {
 	Provider    string    `json:"provider"`
 	ShareID     string    `json:"share_id"`
+	// Node / Prefix：这个登记只对应分享里的某个子目录（按目录导入）。
+	// 有 Node 时追更只重扫这棵子树 —— 否则会把别的目录的文件也带进来。
+	Node        string    `json:"node,omitempty"`
+	Prefix      string    `json:"prefix,omitempty"`
 	Passcode    string    `json:"passcode,omitempty"`
 	Category    string    `json:"category,omitempty"`
 	Show        string    `json:"show,omitempty"`

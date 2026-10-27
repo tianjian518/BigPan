@@ -54,6 +54,9 @@ func TestRenderIndexHasBatchImport(t *testing.T) {
 		"bCat2Opts",     // 二级分类下拉
 		"bTitle(",       // 剧名逐条可改
 		"bOpen(",        // 展开文件、取消勾选
+		"bDirBar(",      // 只导某个子目录：目录筛选条
+		"bDirFilter(",   // 点目录 = 只勾该目录
+		"只导某个目录",
 		"粘贴分享链接",
 	}
 	for _, w := range want {
@@ -85,6 +88,38 @@ func TestNormalizeBatchLink(t *testing.T) {
 		got := normalizeBatchLink(c.in)
 		if got != c.want {
 			t.Errorf("normalizeBatchLink(%q)\n got=%q\nwant=%q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestRenderIndexHasShareBrowse 豆包盘页要有「别人的分享」浏览入口。
+func TestRenderIndexHasShareBrowse(t *testing.T) {
+	html := renderIndex(nil, nil, "http://127.0.0.1:8080")
+	for _, w := range []string{"dbShareLink", "dbOpenShare(", "dbImportShare(", "别人的分享"} {
+		if !strings.Contains(html, w) {
+			t.Errorf("豆包盘页缺少 %q", w)
+		}
+	}
+}
+
+// TestPickSubdirLandsInOwnFolder 只导分享里的「电视剧」目录时，
+// 落盘必须是 豆包1/电视剧/剧名/…（分享容器「芦苇豆包」和目录名折叠掉），
+// 不能出现 豆包1/未分类/芦苇豆包/电视剧/… 这种总文件夹。
+func TestPickSubdirLandsInOwnFolder(t *testing.T) {
+	files := []ShareFile{
+		{ID: "1", Name: "国色芳华-01.mp4", Path: "芦苇豆包/电视剧/最新国产电视剧/国色芳华/国色芳华-01.mp4"},
+		{ID: "2", Name: "国色芳华-02.mp4", Path: "芦苇豆包/电视剧/最新国产电视剧/国色芳华/国色芳华-02.mp4"},
+	}
+	info := ShareInfo{Provider: "doubao1", ShareID: "38abf1bc52e891bd", Title: "芦苇豆包", Files: files}
+	root := shareRootOf(info.Files) // 芦苇豆包
+	got := buildShareItems(info, "", "电视剧", nil, nil, root)
+	if len(got) != 2 {
+		t.Fatalf("应有 2 条，实际 %d", len(got))
+	}
+	want := "豆包1/电视剧/最新国产电视剧/国色芳华"
+	for _, it := range got {
+		if it.Dir != want {
+			t.Errorf("落盘目录 %q，期望 %q", it.Dir, want)
 		}
 	}
 }

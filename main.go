@@ -1707,6 +1707,9 @@ func main() {
 	mux.HandleFunc("/api/accounts/import", requireAuth(apiAccountImport(as)))
 	mux.HandleFunc("/api/accounts/label", requireAuth(apiAccountLabel(as)))
 	mux.HandleFunc("/api/doubao/browse", requireAuth(apiDoubaoBrowse(as)))
+	// 浏览别人的老分享（/drive/s/）：跟浏览自己盘一样逐层点，只导选中的目录
+	mux.HandleFunc("/api/doubao/share/ls", requireAuth(apiDoubaoShareLS(store, as)))
+	mux.HandleFunc("/api/doubao/share/import", requireAuth(apiDoubaoShareImport(store, as, self)))
 	mux.HandleFunc("/api/accounts", requireAuth(apiAccounts(as)))
 	mux.HandleFunc("/api/accounts/", requireAuth(apiAccounts(as)))
 	mux.Handle("/dav/", davGuard(dav, store, self))
