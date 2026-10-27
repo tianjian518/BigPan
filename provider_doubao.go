@@ -218,7 +218,7 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 				},
 			}, nil
 		}
-		title, files, pending, err := scanDoubaoShr(cli, p.Name(), tok)
+		title, files, pending, err := scanDoubaoShr(cli, p.Name(), tok, dbScanBudget)
 		if err != nil {
 			return ShareInfo{}, err
 		}
@@ -233,11 +233,30 @@ func (p doubaoProvider) ListShareFiles(link string) (ShareInfo, error) {
 			},
 		}, nil
 	}
-	title, files, err := scanDoubaoShare(cli, p.Name(), shareID)
+	// 老格式分享（/drive/s/）：几百个目录同样得分段，否则必撞反代超时
+	scanKey := "share|" + p.Name() + "|" + shareID
+	if t, fs, ok := dbTaskRunningInfo(scanKey); ok {
+		return ShareInfo{
+			Provider: p.Name(), Title: t, ShareID: shareID,
+			Files: fs, Logged: true,
+			Pending: true, Scanned: len(fs), ScanKey: scanKey,
+			Resume: func() (string, []ShareFile, bool, error) {
+				return scanDoubaoShare(cli, p.Name(), shareID, dbScanBudget)
+			},
+		}, nil
+	}
+	title, files, pending, err := scanDoubaoShare(cli, p.Name(), shareID, dbScanBudget)
 	if err != nil {
 		return ShareInfo{}, err
 	}
-	return ShareInfo{Provider: p.Name(), Title: title, ShareID: shareID, Files: files, Logged: true}, nil
+	return ShareInfo{
+		Provider: p.Name(), Title: title, ShareID: shareID,
+		Files: files, Logged: true,
+		Pending: pending, Scanned: len(files), ScanKey: scanKey,
+		Resume: func() (string, []ShareFile, bool, error) {
+			return scanDoubaoShare(cli, p.Name(), shareID, dbScanBudget)
+		},
+	}, nil
 }
 
 func (p doubaoProvider) RefreshShare(shareID, passcode string) (string, []ShareFile, error) {
@@ -251,13 +270,18 @@ func (p doubaoProvider) RefreshShare(shareID, passcode string) (string, []ShareF
 	if strings.HasPrefix(shareID, doubaoShrPrefix) {
 		tok := strings.TrimPrefix(shareID, doubaoShrPrefix)
 		// 追更是后台定时任务，没有反代超时压力：不限时一次扫完。
-		title, files, _, err := scanDoubaoShr(cli, p.Name(), tok)
+		title, files, _, err := scanDoubaoShr(cli, p.Name(), tok, 0)
 		if err != nil {
 			return "", nil, err
 		}
 		return title, files, nil
 	}
-	return scanDoubaoShare(cli, p.Name(), shareID)
+	// 追更是后台定时任务，没有反代超时压力：不限时一次扫完
+	title, files, _, err := scanDoubaoShare(cli, p.Name(), shareID, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	return title, files, nil
 }
 
 func (p doubaoProvider) ResolvePlay(item *Item) (PlayTarget, error) {
@@ -451,17 +475,21 @@ func scanDoubaoOwn(cli *Doubao, slot, nodeID, hint string, budget time.Duration)
 // 列取和自己盘完全同一个接口（children/list?token=xxx），权限由服务端
 // 按「链接可见」判定 —— 所以扫描逻辑直接复用 scanDoubaoOwn，
 // 只有标题来源不同：用 obj/path 接口拿分享根的名字。
-func scanDoubaoShr(cli *Doubao, slot, token string) (string, []ShareFile, bool, error) {
+func scanDoubaoShr(cli *Doubao, slot, token string, budget time.Duration) (string, []ShareFile, bool, error) {
 	hint, err := cli.dbnNodeName(token)
 	if err != nil {
 		log.Printf("[豆包v2] 取分享名失败（不影响导入）：%v", err)
 		hint = ""
 	}
-	return scanDoubaoOwn(cli, slot, token, hint, dbScanBudget)
+	return scanDoubaoOwn(cli, slot, token, hint, budget)
 }
 
 // scanDoubaoShare 递归扫描别人的分享目录树。规则同自己的盘：失败即停、断点续传。
-func scanDoubaoShare(cli *Doubao, slot, shareID string) (string, []ShareFile, error) {
+//
+// budget > 0 时分段：到点返回已扫部分 + pending=true，前端/后台任务接着扫。
+// 老格式分享（/drive/s/）动辄几百个目录，一口气扫必然撞反向代理 60 秒超时
+// —— 这是「内容一多就解析失败」在老分享上的同一个病（2026-10-27 补）。
+func scanDoubaoShare(cli *Doubao, slot, shareID string, budget time.Duration) (string, []ShareFile, bool, error) {
 	type job = dbScanJob
 	key := "share|" + slot + "|" + shareID
 	st := dbScanTake(key)
@@ -479,7 +507,7 @@ func scanDoubaoShare(cli *Doubao, slot, shareID string) (string, []ShareFile, er
 		var err error
 		title, nodes, err = cli.dbShareOverview(shareID)
 		if err != nil {
-			return "", nil, err
+			return "", nil, false, err
 		}
 		for _, n := range nodes {
 			if n.IsDir() {
@@ -496,22 +524,40 @@ func scanDoubaoShare(cli *Doubao, slot, shareID string) (string, []ShareFile, er
 			}
 		}
 	} else {
-		log.Printf("[豆包] 从断点继续（分享）：已扫 %d 个目录 / 已有 %d 个视频", len(seen), len(files))
+		log.Printf("[豆包] 从断点继续（分享）：已扫 %d 个目录 / 已有 %d 个视频 / 还剩 %d 个目录待扫",
+			len(seen), len(files), len(queue))
+	}
+
+	start := time.Now()
+	deadline := start.Add(budget)
+	// snapshot 把当前现场拍成可落盘的快照（原来两处落盘各写一遍，容易漏字段）
+	snapshot := func() *dbScanState {
+		ids := make([]string, 0, len(seen))
+		for id := range seen {
+			ids = append(ids, id)
+		}
+		return &dbScanState{
+			Key: key, Title: title, Queue: append([]job(nil), queue...),
+			Seen: ids, Files: files,
+		}
 	}
 
 	dirty := 0
 	for len(queue) > 0 && len(files) < 20000 && len(seen) < 5000 {
+		// 到点交回已扫部分（同自己盘），否则几百个目录必然超时
+		if budget > 0 && time.Now().After(deadline) {
+			dbScanPut(snapshot())
+			log.Printf("[豆包] 分段返回（分享）：已扫 %d 个目录 / %d 个视频，还剩 %d 个目录（会自动续扫）",
+				len(seen), len(files), len(queue))
+			return title, files, true, nil
+		}
 		j := queue[0]
 		queue = queue[1:]
 		list, err := cli.dbShareListDir(shareID, j.ID)
 		if err != nil {
 			queue = append([]job{j}, queue...) // 同自己盘：正在扫的这个不能丢
-			ids := make([]string, 0, len(seen))
-			for id := range seen {
-				ids = append(ids, id)
-			}
-			dbScanPut(&dbScanState{Key: key, Title: title, Queue: append([]job(nil), queue...), Seen: ids, Files: files})
-			return "", nil, fmt.Errorf("豆包限流了（请求太密，不是文件出错）。已扫到 %d 个目录 / %d 个视频，进度已保存。\n等 3~5 分钟再点一次「解析」，会从这里接着扫。\n原始信息：%w",
+			dbScanPut(snapshot())
+			return "", nil, false, fmt.Errorf("豆包限流了（请求太密，不是文件出错）。已扫到 %d 个目录 / %d 个视频，进度已保存。\n等 3~5 分钟再点一次「解析」，会从这里接着扫。\n原始信息：%w",
 				len(seen), len(files), err)
 		}
 		for _, n := range list {
@@ -531,18 +577,14 @@ func scanDoubaoShare(cli *Doubao, slot, shareID string) (string, []ShareFile, er
 		}
 		if dirty++; dirty >= 30 {
 			dirty = 0
-			ids := make([]string, 0, len(seen))
-			for id := range seen {
-				ids = append(ids, id)
-			}
-			dbScanPut(&dbScanState{Key: key, Title: title, Queue: append([]job(nil), queue...), Seen: ids, Files: files})
+			dbScanPut(snapshot())
 		}
 	}
 	dbScanDone(key)
 	if len(files) == 0 {
-		return "", nil, fmt.Errorf("这个分享里没有视频文件")
+		return "", nil, false, fmt.Errorf("这个分享里没有视频文件")
 	}
-	return title, files, nil
+	return title, files, false, nil
 }
 
 // ---- 浏览自己的盘（给界面用）----
