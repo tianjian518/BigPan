@@ -1002,11 +1002,11 @@ function dbGo(nodeId){
        t+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.is_dir?'📁 ':(it.video?'🎬 ':'📄 '))+esc(it.name)+'</span>';
        t+='<span class="sub" style="white-space:nowrap">'+(it.is_dir?(it.children?it.children+' 项':''):humanSize(it.size))+'</span>';
        if(it.is_dir){
-         t+='<button class="mini" onclick="dbEnter(\''+escA(it.id)+'\',\''+encodeURIComponent(it.name)+'\')">进入</button>';
+         var nid=it.node_id||it.id||''; // 分享接口叫 node_id，自家盘接口叫 id
+         t+='<button class="mini" onclick="dbEnter(\''+escA(nid)+'\',\''+encodeURIComponent(it.name)+'\')">进入</button>';
          if(DB_SHARE){
            // 分享模式：直接导这个目录（只扫这棵子树），不用先跳去解析整条链接
-           t+='<button class="mini '+(it.imported?'gray':'')+'" onclick="dbImportShare(\''+escA(it.node_id)+'\',\''+encodeURIComponent(it.path)+'\',\''+encodeURIComponent(it.name)+'\')">'
-             +(it.imported?'再导·补缺':'导入此目录')+'</button>';
+           t+='<button class="mini" onclick="dbImportShare(\''+escA(nid)+'\',\''+encodeURIComponent(it.path)+'\',\''+encodeURIComponent(it.name)+'\')">导入此目录</button>';
          }else{
            t+='<button class="mini gray" onclick="dbPick(\''+escA(it.link)+'\')">导入此目录</button>';
          }

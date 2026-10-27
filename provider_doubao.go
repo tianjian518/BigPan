@@ -744,8 +744,7 @@ type doubaoShareItem struct {
 	IsDir    bool   `json:"is_dir"`
 	Video    bool   `json:"video"`
 	Size     int64  `json:"size"`
-	Children int    `json:"children,omitempty"` // 目录：直接子项数（不深扫，快）
-	Imported bool   `json:"imported,omitempty"` // 媒体库里已经有这个目录的条目
+	Imported bool   `json:"imported,omitempty"` // 媒体库里已经有这个目录的条目（前台不显示，仅供排查）
 }
 
 // apiDoubaoShareLS GET /api/doubao/share/ls?link=&node_id=&path=
@@ -780,6 +779,12 @@ func apiDoubaoShareLS(store *Store, as *AccountStore) http.HandlerFunc {
 		if cli == nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": providerCN(dp.Name()) + " 还没粘 Cookie"})
 			return
+		}
+		if nodeID != "" {
+			if _, e := strconv.ParseInt(nodeID, 10, 64); e != nil {
+				writeJSON(w, map[string]interface{}{"ok": false, "error": "目录标识无效，请点「回根目录」重新进入"})
+				return
+			}
 		}
 
 		title := path
@@ -837,13 +842,13 @@ func apiDoubaoShareLS(store *Store, as *AccountStore) http.HandlerFunc {
 				Name: n.Name, ID: n.ID, Path: pth,
 				IsDir: n.IsDir(), Size: n.Size,
 			}
-			if n.IsDir() {
-				if kids, e := cli.dbShareListDir(shareID, n.ID); e == nil {
-					it.Children = len(kids)
-				}
-				it.Imported = libHasDir(store, base, n.Name)
-			} else {
+			// 【不要预取子项数】每个目录多打一次接口，9 个目录就是 20 秒+，
+			// 反代 20 秒就断，用户看到的是「点了进不去、转圈回到根目录」。
+			// 列表只要名字就够，点进去再列。
+			if !n.IsDir() {
 				it.Video = isVideo(n.Name)
+			} else {
+				it.Imported = libHasDir(store, base, n.Name)
 			}
 			items = append(items, it)
 		}
@@ -855,6 +860,7 @@ func apiDoubaoShareLS(store *Store, as *AccountStore) http.HandlerFunc {
 }
 
 // libHasDir 媒体库里是否已有「网盘/这个目录名」下的条目。
+// 只用来给目录行打标记，前台不显示；补齐逻辑在入库时按 fileID 走。
 func libHasDir(store *Store, providerName, dir string) bool {
 	if store == nil {
 		return false
@@ -896,6 +902,10 @@ func apiDoubaoShareImport(store *Store, as *AccountStore, self string) http.Hand
 		cli := dp.client(as)
 		if cli == nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": providerCN(dp.Name()) + " 还没粘 Cookie"})
+			return
+		}
+		if _, e := strconv.ParseInt(req.NodeID, 10, 64); e != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "目录标识无效，请回根目录重新进入"})
 			return
 		}
 		cat, catErr := normalizeCategory(req.Category)
