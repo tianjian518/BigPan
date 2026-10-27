@@ -54,9 +54,7 @@ func TestRenderIndexHasBatchImport(t *testing.T) {
 		"bCat2Opts",     // 二级分类下拉
 		"bTitle(",       // 剧名逐条可改
 		"bOpen(",        // 展开文件、取消勾选
-		"bDirBar(",      // 只导某个子目录：目录筛选条
-		"bDirFilter(",   // 点目录 = 只勾该目录
-		"只导某个目录",
+		// 目录筛选条已撤：改由「豆包盘」页浏览分享、点哪个导哪个（一套入口）
 		"粘贴分享链接",
 	}
 	for _, w := range want {

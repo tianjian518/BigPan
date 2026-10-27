@@ -622,6 +622,9 @@ type ShareSummary struct {
 	ShareID   string `json:"share_id"`
 	Passcode  string `json:"passcode,omitempty"`
 	Category  string `json:"category,omitempty"` // 分类（如 国产剧/欧美剧）
+	// Group 目录单元：同一个分享按目录导入多次时，用它把每块分成独立一行。
+	// 值 = 条目目录的第二段（豆包1/电视剧/… → 电视剧）。空 = 整分享导入的老数据。
+	Group     string `json:"group,omitempty"`
 	ShowName  string `json:"show_name"`          // 剧名
 	Files     int    `json:"files"`
 	LastAdded string `json:"last_added"`
@@ -666,7 +669,18 @@ func shareURL(provider, shareID, passcode string) string {
 	return ""
 }
 
-// Shares 按（网盘 + 分享ID）聚合出已导入的分享清单。
+// dirGroup 条目所属的「目录单元」：豆包1/电视剧/剧名/… → 电视剧。
+// 同一个大分享按目录分几次导入时，靠它把每块拆成独立一行。
+// 目录不足三段（老数据或直接挂在网盘根上）返回空，仍按整分享聚合。
+func dirGroup(dir string) string {
+	p := strings.Split(strings.Trim(dir, "/"), "/")
+	if len(p) >= 3 {
+		return p[1]
+	}
+	return ""
+}
+
+// Shares 按（网盘 + 分享ID + 目录单元）聚合出已导入的分享清单。
 func (s *Store) Shares() []ShareSummary {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -686,7 +700,11 @@ func (s *Store) Shares() []ShareSummary {
 		if it.SubUserID != "" {
 			continue // 订阅号收录的条目不进分享列表（由天翼订阅号面板管理）
 		}
-		key := it.Provider + "|" + it.ShareID
+		// 先算目录单元：豆包1/电视剧/剧名 → "电视剧"。
+		// 同一个大分享分几次按目录导入，就是几行（以前全挤成一行，
+		// 文件数还是六个目录的总和，看着像"导入没生效"）。
+		grp := dirGroup(it.Dir)
+		key := it.Provider + "|" + it.ShareID + "|" + grp
 		a := m[key]
 		if a == nil {
 			a = &agg{}
@@ -723,9 +741,13 @@ func (s *Store) Shares() []ShareSummary {
 	out := make([]ShareSummary, 0, len(order))
 	for _, k := range order {
 		a := m[k]
-		kv := strings.SplitN(k, "|", 2)
+		kv := strings.SplitN(k, "|", 3)
+		grp := ""
+		if len(kv) >= 3 {
+			grp = kv[2]
+		}
 		out = append(out, ShareSummary{
-			Provider: kv[0], ShareID: kv[1],
+			Provider: kv[0], ShareID: kv[1], Group: grp,
 			Passcode: a.pass, Category: a.cat, ShowName: a.show,
 			Files: a.n, LastAdded: a.last,
 			ShareURL: shareURL(kv[0], kv[1], a.pass),

@@ -499,14 +499,6 @@ code{background:#f2f4f8;border:1px solid var(--line2);padding:2.5px 9px;border-r
         <div id="dbAccts" style="margin-top:6px"><div class="loading"><span class="spin"></span>读取中…</div></div>
         <div class="sub" style="margin-top:10px">Cookie 只认 <b>sessionid</b>，约 30 天有效，过期重粘一次。连上后点「浏览」进自己的网盘挑目录，<b>不需要分享链接、不会被删</b>。</div>
       </div>
-      <div class="card">
-        <div class="chd"><b>别人的分享</b><span class="csub">粘老链接（/drive/s/），进来挑目录导，不用登他的号</span></div>
-        <div class="row" style="margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap">
-          <input id="dbShareLink" placeholder="https://www.doubao.com/drive/s/xxxxxxxx" style="flex:1;min-width:220px" onkeydown="if(event.key==='Enter')dbOpenShare()">
-          <button onclick="dbOpenShare()">浏览目录</button>
-        </div>
-        <div class="sub" style="margin-top:8px">读的还是你自己的豆包账号：看到的是这个分享里的目录，<b>点哪个导哪个</b>，不会把整条链接塞进一个总文件夹。</div>
-      </div>
       <div class="card" id="dbPane" style="display:none">
         <div class="chd"><b id="dbPaneName">浏览</b><span class="csub" id="dbCrumb">根目录</span></div>
         <div class="row" style="margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap">
@@ -719,7 +711,11 @@ var ACC_LOADED=false;
 // cb 只在「名字已就绪」时调用一次，供媒体库/首页渲染用。
 function loadAccNames(cb){
   if(ACC_LOADED){ if(cb)setTimeout(cb,0); return; }
-  fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
+  Promise.all([
+    fetch('/api/accounts').then(function(r){return r.json()}),
+    fetch('/api/doubao/share/sources').then(function(r){return r.json()}).catch(function(){return {}})
+  ]).then(function(res){
+    var d=res[0]; DBSRC=(res[1]&&res[1].sources)||[];
     (d.accounts||[]).forEach(function(a){
       if((a.provider||'').indexOf('doubao')!==0)return;
       var slot='豆包'+a.provider.slice(6);
@@ -910,7 +906,7 @@ function batchSplit(text){
 // ---- 豆包盘：账号列表 + 浏览（伪链接 doubao://<槽位>/<node_id>）----
 var DB_STACK=[], DB_SLOT='doubao1', DB_NAMES={};
 // DB_SHARE 非空 = 正在浏览别人的老分享（/drive/s/）。读自己账号的 Cookie，看分享里的目录。
-var DB_SHARE=null;
+var DB_SHARE=null, DBSRC=[];
 
 // 给豆包账号起别名。豆包官方没有任何用户信息接口，自动标识只有 uid 短码，
 // 4 个号光看「豆包1/2/3/4」分不清，所以允许自己命名（留空恢复自动）。
@@ -925,7 +921,11 @@ function dbRename(pv,cur){
   },true,cur||'');
 }
 function paintDoubao(){
-  fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
+  Promise.all([
+    fetch('/api/accounts').then(function(r){return r.json()}),
+    fetch('/api/doubao/share/sources').then(function(r){return r.json()}).catch(function(){return {}})
+  ]).then(function(res){
+    var d=res[0]; DBSRC=(res[1]&&res[1].sources)||[];
     var map={};
     (d.accounts||[]).forEach(function(a){map[a.provider]=a});
     var t='';
@@ -954,6 +954,25 @@ function paintDoubao(){
       }
       t+='</div>';
     }
+    // 分享（别人的链接）与账号并排：粘一次存下来，以后点「浏览」直接进目录
+    if(DBSRC.length){
+      t+='<div style="padding:12px 4px 6px;color:var(--mut);font-size:12px;border-top:1px solid var(--line);margin-top:6px">分享（别人的链接）</div>';
+      DBSRC.forEach(function(s){
+        var nm=s.alias||s.title||'分享';
+        t+='<div style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line);flex-wrap:wrap">';
+        t+='<b style="min-width:64px">'+esc(nm)+'</b>';
+        t+='<span class="tag d">分享</span>';
+        t+='<span class="sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px" title="'+escA(s.link)+'">'+esc(s.share_id)+'</span>';
+        t+='<span style="flex:1"></span>';
+        t+='<button class="mini" onclick="dbOpenShare(\''+escA(s.link)+'\',\''+escA(nm)+'\')">浏览</button>';
+        t+='<button class="mini gray" onclick="delSource(\''+escA(s.share_id)+'\',\''+escA(nm)+'\')">移除</button>';
+        t+='</div>';
+      });
+    }
+    t+='<div class="row" style="margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap">'
+      +'<input id="dbShareLink" placeholder="粘贴 https://www.doubao.com/drive/s/… 添加一个分享" style="flex:1;min-width:240px" onkeydown="if(event.key===\'Enter\')dbAddShare()">'
+      +'<button onclick="dbAddShare()">添加分享</button></div>';
+    t+='<div class="sub" style="margin-top:8px">分享可以加多个；读的还是你自己的豆包账号，看到的是那个分享里的目录，<b>点哪个导哪个</b>。</div>';
     $('dbAccts').innerHTML=t;
     var on=(d.accounts||[]).filter(function(a){return (a.provider||'').indexOf('doubao')===0});
     if(on.length===1 && !$('dbPane').dataset.userClosed) dbOpenFor(on[0].provider);
@@ -965,14 +984,32 @@ function dbOpenFor(pv){
   $('dbPaneName').textContent=DB_NAMES[pv]||PVCN[pv]||pv;
   dbGo('');
 }
-function dbOpenShare(){
-  var l=($('dbShareLink')?$('dbShareLink').value:'').trim();
+function dbOpenShare(link,name){
+  var l=(link||($('dbShareLink')?$('dbShareLink').value:'')||'').trim();
   if(!l){toast('先粘贴豆包分享链接（/drive/s/…）');return}
   DB_SHARE={link:l,stack:[]};
   $('dbPane').style.display='';
-  $('dbPaneName').textContent='别人的分享';
+  $('dbPaneName').textContent=name||'别人的分享';
   $('dbPane').dataset.userClosed='';
   dbGo('');
+}
+function dbAddShare(){
+  var l=($('dbShareLink')?$('dbShareLink').value:'').trim();
+  if(!l){toast('先粘贴分享链接');return}
+  toast('正在验证链接…');
+  fetch('/api/doubao/share/sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({link:l})})
+   .then(function(r){return r.json()}).then(function(d){
+     if(!d.ok){toast(d.error||'添加失败');return}
+     DBSRC=d.sources||[]; paintDoubao(); toast('已添加，点「浏览」进目录');
+   }).catch(function(){toast('添加失败，网络异常')});
+}
+function delSource(id,name){
+  openModal('移除分享','从列表移除「'+name+'」？\n已导入的条目和媒体库不受影响，只是不再显示这个入口。','移除',function(){
+    fetch('/api/doubao/share/sources?id='+encodeURIComponent(id),{method:'DELETE'})
+     .then(function(r){return r.json()}).then(function(d){
+       if(d.ok){ toast('已移除'); if(DB_SHARE&&DB_SHARE.link.indexOf(id)>=0){ $('dbPane').style.display='none'; DB_SHARE=null; } DBSRC=d.sources||[]; paintDoubao(); }
+     });
+  });
 }
 function dbClosePane(){ $('dbPane').style.display='none'; $('dbPane').dataset.userClosed='1'; DB_SHARE=null; }
 function dbCurStack(){ return DB_SHARE?DB_SHARE.stack:DB_STACK }
@@ -1017,31 +1054,63 @@ function dbGo(nodeId){
    }).catch(function(){ $('dbList').innerHTML='<div class="sub">读取失败，检查 Cookie 是否过期</div>' });
 }
 function dbEnter(id,name){ dbCurStack().push({id:id,name:decodeURIComponent(name)}); dbGo(id); }
-// 分享模式：只导入点中的这个目录（扫的是子树，不是整条链接）
+// 分享模式：点「导入此目录」→ 跳导入页，先列出全部视频让人确认（改名/勾选），
+// 确认后才入库。跟自家盘「导入此目录」的流程一致，不再一步到位。
+var DB_SEED=null;
 function dbImportShare(nodeID,encPath,encName){
   if(!DB_SHARE)return;
-  var pth=decodeURIComponent(encPath), nm=decodeURIComponent(encName);
-  var round=0, added=0, total=0;
-  function step(){
-    round++;
-    fetch('/api/doubao/share/import',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({link:DB_SHARE.link,node_id:nodeID,path:pth})})
-    .then(function(r){return r.json()}).then(function(d){
-      if(!d.ok){
-        if(d.pending&&round<40){ setTimeout(step,1200); return }
-        toast(d.error||'导入失败'); return
-      }
-      added+=d.added||0; total=d.total||total;
-      if(d.pending&&round<40){
-        toast('正在扫「'+nm+'」：已扫 '+total+' 个视频，入库 '+added+' 条…');
-        setTimeout(step,1200); return
-      }
-      toast('「'+nm+'」导入完成：'+added+' 条'+(d.pending?'（还没扫完，再点一次接着扫）':''));
-      loadItems(function(){ dbReload(); });
-    }).catch(function(){ toast('导入失败，网络异常') });
+  DB_SEED={link:DB_SHARE.link,node_id:nodeID,
+           path:decodeURIComponent(encPath),name:decodeURIComponent(encName)};
+  if($('batchText'))$('batchText').value=DB_SHARE.link;
+  nav('import');
+  setTimeout(seedParse,200);
+}
+// 只扫不入库：后端后台任务扫描（网关 20 秒就断，不能同步等），
+// 这里轮询 /api/share/parse/status 拿进度，扫完生成一行待确认。
+function seedParse(){
+  var sd=DB_SEED;if(!sd)return;
+  var box=$('batchOut');
+  var job='',provider='',shareID='',title=sd.name,tick=0;
+  function paint(msg){ box.innerHTML='<div class="loading"><span class="spin"></span>'+msg+'</div>' }
+  function fail(msg){
+    box.innerHTML='<div class="empty"><div class="ei" style="background:var(--danger2)"><svg style="stroke:var(--danger)" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg></div><b>解析失败</b>'+esc(msg||'')+'</div>';
   }
-  toast('开始导入「'+nm+'」，文件多时要一会儿…');
-  step();
+  paint('正在解析「'+esc(sd.name)+'」，大目录要几分钟，别关页面…');
+  fetch('/api/doubao/share/scan',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({link:sd.link,node_id:sd.node_id,path:sd.path})})
+   .then(function(r){return r.json()}).then(function(d){
+     if(!d.ok){ fail(d.error); return }
+     job=d.job; provider=d.provider||provider; shareID=d.share_id||shareID; title=d.title||title;
+     poll();
+   }).catch(function(){ fail('网络异常') });
+
+  function poll(){
+    tick++;
+    if(tick>600){ fail('等太久了，回豆包盘重新点一次「导入此目录」'); return }
+    fetch('/api/share/parse/status?job='+encodeURIComponent(job))
+     .then(function(r){return r.json()}).then(function(s){
+       if(!s.ok){ fail(s.error||'任务已结束，回豆包盘重新点一次'); return }
+       var files=s.files||[];
+       if(!s.done){
+         paint('正在解析「'+esc(sd.name)+'」：已扫 '+files.length+' 个视频'
+           +(s.remain>0?('，还剩约 '+s.remain+' 个目录'):'')+'…');
+         setTimeout(poll,2000); return;
+       }
+       if(s.error&&!files.length){ fail(s.error); return }
+       if(!files.length){ box.innerHTML='<div class="sub">这个目录里还没扫到视频</div>'; return }
+       // 扫到一半被限流/中断：先把已扫到的列出来让人导，剩下再点一次补齐
+       if(s.error) toast('扫描中断（'+String(s.error).slice(0,50)+'），先导已扫到的 '+files.length+' 个，稍后再点一次补齐');
+       var row={link:sd.link,provider:provider,share_id:shareID,title:title,orig_title:title,
+         files:files,rawFiles:files,sel:{},cat1:'',cat2:'',open:false,ok:true,exists:false,count:files.length};
+       files.forEach(function(f){row.sel[f.id]=true});
+       BATCH_ROWS.push(row);
+       DB_SEED=null;
+       loadItems(function(){
+         renderBatchRows();
+         toast('解析完成：'+files.length+' 个视频，改名/勾选后点「开始导入」');
+       });
+     }).catch(function(){ setTimeout(poll,2500) });
+  }
 }
 function dbReload(){
   var st=dbCurStack();
@@ -1431,7 +1500,7 @@ function batchAdd(){
     (r.files||[]).forEach(function(f){if(r.sel[f.id])ids.push(f.id)});
     if(!ids.length)return;
     items.push({provider:r.provider,share_id:r.share_id,category:bCatOf(r),
-      title:(r.title||'').trim(),files:ids});
+      title:(r.title||'').trim(),files:ids,file_infos:r.rawFiles||undefined});
   });
   if(!items.length){toast('没有可导入的文件（可能全被取消勾选了）');return}
   var msg=$('batchMsg');
@@ -1565,8 +1634,9 @@ function loadShares(page){
       var colRefresh=isNode
         ?'<td><span class="sub" title="这是你自己豆包盘里的目录，文件变动时重新导入即可">目录</span></td>'
         :'<td><button class="mini '+(st?'ston':'gray')+'" onclick="toggleShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+(st?'true':'false')+')">'+(st?'追更中':'已完结')+'</button></td>';
-      var ops='<button class="mini" onclick="showRename(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+escA(cleanShow(s.show_name))+'\')" title="改剧名：媒体库目录、追更、STRM 一起跟着改；Emby 认不了的符号（emoji 等）会自动清掉">改名</button> '+
-        '<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这部剧的所有文件会在媒体库里搬到新分类">分类</button> ';
+      var GRP=escA(s.group||'');
+      var ops='<button class="mini" onclick="showRename(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+escA(cleanShow(s.show_name))+'\',\''+GRP+'\')" title="改剧名：媒体库目录、追更、STRM 一起跟着改；Emby 认不了的符号（emoji 等）会自动清掉">改名</button> '+
+        '<button class="mini" data-p="'+esc(s.provider)+'" data-id="'+esc(s.share_id)+'" data-g="'+GRP+'" data-show="'+escA(cleanShow(s.show_name))+'" data-cur="'+escA(s.category||'')+'" onclick="openCatModal(this)" title="事后补救：导入时分类选错了就在这里改——这一块的文件会在媒体库里搬到新分类（同分享的其他目录不动）">分类</button> ';
       if(!isNode){
         ops='<button class="mini" onclick="refreshShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\',\''+esc(s.passcode||'')+'\')">刷新</button> '+ops
           +'<button class="mini danger" onclick="purgeShare(\''+esc(s.provider)+'\',\''+esc(s.share_id)+'\','+s.files+')">已失效</button> ';
@@ -1683,11 +1753,11 @@ function refreshShare(p,id,pwd){
 // ---- 事后改分类（两级：一级/二级联动下拉）----
 var CATLIST=[], CATM=null;
 // 改剧名：整条分享统一改名（订阅号自动收录的名字带 emoji 时尤其需要）
-function showRename(pv,sid,cur){
+function showRename(pv,sid,cur,grp){
   askText('改剧名','输入新名字；emoji 等符号会自动清掉',function(v){
     if(v===null)return;
     fetch('/api/shares/rename',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({provider:pv,share_id:sid,show:v})})
+      body:JSON.stringify({provider:pv,share_id:sid,show:v,group:grp||''})})
      .then(function(r){return r.json()}).then(function(d){
        if(d.ok){
          toast('已改名（'+d.renamed+' 个条目），媒体库同步中');
@@ -1705,7 +1775,8 @@ function showRename(pv,sid,cur){
   },false,cur||'');
 }
 function openCatModal(el){
-  CATM={provider:el.getAttribute('data-p'),share_id:el.getAttribute('data-id'),show:el.getAttribute('data-show')||''};
+  CATM={provider:el.getAttribute('data-p'),share_id:el.getAttribute('data-id'),
+    group:el.getAttribute('data-g')||'',show:el.getAttribute('data-show')||''};
   var cur=el.getAttribute('data-cur')||'';
   $('cmTitle').textContent='改分类：《'+(CATM.show||'')+'》';
   $('cmCur').textContent=cur||'不分类';
@@ -1741,7 +1812,7 @@ function doChangeCat(){
   var cat=curCat('cmSel1','cmSel2','cmNew1','cmNew2');
   var m=CATM;closeCatModal();
   toast('正在改分类…');
-  fetch('/api/shares/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:m.provider,share_id:m.share_id,category:cat})})
+  fetch('/api/shares/category',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:m.provider,share_id:m.share_id,category:cat,group:m.group||''})})
   .then(function(r){return r.json()}).then(function(d){
     if(d.ok){
       toast('已改到「'+(d.category||'不分类')+'」，'+d.moved+' 个文件换了位置');
@@ -2274,7 +2345,11 @@ var PV_CONN={
 
 // 渲染全部网盘列表：连了的亮状态+退出按钮，没连的出「连接」按钮
 function loadAccts(){
-  fetch('/api/accounts').then(function(r){return r.json()}).then(function(d){
+  Promise.all([
+    fetch('/api/accounts').then(function(r){return r.json()}),
+    fetch('/api/doubao/share/sources').then(function(r){return r.json()}).catch(function(){return {}})
+  ]).then(function(res){
+    var d=res[0]; DBSRC=(res[1]&&res[1].sources)||[];
     var arr=d.accounts||d||[];if(!Array.isArray(arr))arr=[];
     var map={};for(var i=0;i<arr.length;i++)map[arr[i].provider]=arr[i];
     ACCTS_MAP=map; // 缓存：连接弹窗要据此判断「另一样凭证连了没」

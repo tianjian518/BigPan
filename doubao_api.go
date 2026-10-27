@@ -78,7 +78,7 @@ func dbGapNow() time.Duration {
 	return dbGapCur
 }
 
-// dbGapOnFail 撞限流：连续 2 次就成倍放大间隔，最多 4 秒。
+// dbGapOnFail 撞限流：连续 2 次就成倍放大间隔，最多 10 秒（软限流要更慢才稳）。
 func dbGapOnFail() {
 	dbGapMu.Lock()
 	defer dbGapMu.Unlock()
@@ -88,8 +88,8 @@ func dbGapOnFail() {
 		if cur <= 0 {
 			cur = doubaoGap
 		}
-		if next := cur * 2; next > 4*time.Second {
-			dbGapCur = 4 * time.Second
+		if next := cur * 2; next > 10*time.Second {
+			dbGapCur = 10 * time.Second
 		} else {
 			dbGapCur = next
 		}
@@ -270,6 +270,20 @@ func (e *dbThrottleErr) Error() string {
 func isThrottleErr(err error) bool {
 	_, ok := err.(*dbThrottleErr)
 	return ok
+}
+
+// dbSoftThrottle 判断错误是不是「限流/风控」这一类。
+// 扫描层用它决定「退避重试」还是「真出错」—— 限流是暂时的，不该让整个扫描失败。
+func dbSoftThrottle(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isThrottleErr(err) {
+		return true
+	}
+	m := err.Error()
+	return strings.Contains(m, "限流") || strings.Contains(m, "风控") ||
+		strings.Contains(m, "太密") || strings.Contains(m, "671000000")
 }
 
 // dbTrace 记录本次请求实际走了哪个出口 IP，用来在失败时精准冷却它。
@@ -554,7 +568,11 @@ func (d *Doubao) post(path string, body any) (json.RawMessage, error) {
 				msg = out.Message
 			}
 			low := strings.ToLower(msg)
-			if strings.Contains(low, "too many") || strings.Contains(msg, "频繁") || out.Code == 429 {
+			// 【2026-10-27 实测】671000000「unknown error」就是豆包的软限流：
+			// 扫几十个目录后必现，等几分钟又好了。之前没识别，后果是
+			// 不冷却出口、不放大间隔、不换 IP，直接整个扫描中止 ——
+			// 用户看到「扫出几千只导入几十个」就是它。
+			if out.Code == 671000000 || strings.Contains(low, "too many") || strings.Contains(msg, "频繁") || out.Code == 429 {
 				d.coolDown(trace.ip)
 				dbGapOnFail()
 				lastErr = fmt.Errorf("豆包接口限流：%s", msg)

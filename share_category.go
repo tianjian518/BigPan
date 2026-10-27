@@ -91,6 +91,10 @@ func apiShareCategory(store *Store, self string) http.HandlerFunc {
 			Provider string `json:"provider"`
 			ShareID  string `json:"share_id"`
 			Category string `json:"category"`
+			// Group 只改这一个目录单元（豆包1/电视剧/…）。
+			// 空 = 整分享（老行为）。不区分的话，点「电视剧」那行的分类
+			// 会把同一个分享下的电影/动漫一起搬走。
+			Group string `json:"group"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Provider == "" || req.ShareID == "" {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "参数错误"})
@@ -109,6 +113,9 @@ func apiShareCategory(store *Store, self string) http.HandlerFunc {
 		show, passcode := "", ""
 		moved := store.UpdateBatch(func(x *Item) bool {
 			if x.Provider != req.Provider || x.ShareID != req.ShareID {
+				return false
+			}
+			if req.Group != "" && dirGroup(x.Dir) != req.Group {
 				return false
 			}
 			if show == "" {
@@ -206,6 +213,7 @@ func apiShareRename(store *Store, self string) http.HandlerFunc {
 			Provider string `json:"provider"`
 			ShareID  string `json:"share_id"`
 			Show     string `json:"show"`
+			Group    string `json:"group"` // 只改这一个目录单元（空 = 整分享）
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Provider == "" || req.ShareID == "" {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "参数错误"})
@@ -225,6 +233,9 @@ func apiShareRename(store *Store, self string) http.HandlerFunc {
 			if x.Provider != req.Provider || x.ShareID != req.ShareID {
 				return false
 			}
+			if req.Group != "" && dirGroup(x.Dir) != req.Group {
+				return false
+			}
 			if show == "" {
 				show = x.Show
 			}
@@ -236,6 +247,13 @@ func apiShareRename(store *Store, self string) http.HandlerFunc {
 			}
 			return true
 		}, func(x *Item) {
+			// 按目录导入的那类行（Group 非空）：目录是 网盘/目录名/片名，里面
+			// 没有剧名层，硬套 itemDirWithShow 会把每个片名都改成同一个名字。
+			// 这类行只改列表显示名。
+			if req.Group != "" {
+				x.Show = newShow
+				return
+			}
 			// 【顺序要紧】先按旧 Show 算新目录，再把 Show 换成新名 ——
 			// 反了的话 itemDirWithShow 找不到旧剧名段，会误替换分类段。
 			x.Dir = itemDirWithShow(x, newShow)
@@ -246,8 +264,9 @@ func apiShareRename(store *Store, self string) http.HandlerFunc {
 			return
 		}
 
-		// 追更登记同步：否则追更出的新剧集还按旧剧名落目录
-		if globalShares != nil {
+		// 追更登记同步：否则追更出的新剧集还按旧剧名落目录。
+		// 按目录分出来的行不动登记 —— 登记是分享级的，改了会污染其他目录。
+		if globalShares != nil && req.Group == "" {
 			m := globalShares.Get(req.Provider, req.ShareID)
 			if m == nil {
 				m = &ShareMeta{Provider: req.Provider, ShareID: req.ShareID, Passcode: passcode}

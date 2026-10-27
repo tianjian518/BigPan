@@ -12,6 +12,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -187,6 +188,10 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 				// Files 可选：只收这些 fileID（用户在预览里取消了部分勾选）；
 				// 空 = 全收（默认）。
 				Files []string `json:"files"`
+				// FileInfos 文件全量信息（id/name/path/size…）。
+				// 豆包盘「按目录导入」走这条：扫描结果只在前端手里，
+				// 服务端内存缓存一重启就没了（用户遇到过「解析结果已过期」）。
+				FileInfos []ShareFile `json:"file_infos"`
 			} `json:"items"`
 			AutoRefresh *bool `json:"auto_refresh"`
 		}
@@ -219,12 +224,20 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 
 		for i, item := range req.Items {
 			rr := res{Provider: item.Provider, ShareID: item.ShareID}
-			info, ok := batchParseCache.get(item.Provider, item.ShareID)
-			// 后台任务手里是最新最全的（缓存每扫完一段才刷新一次）。
-			// 谁的文件多就用谁 —— 否则「扫出几千个、只导入几十个」。
-			if j := dbTaskByShare(item.Provider, item.ShareID); j != nil {
-				if ji := j.asShareInfo(); len(ji.Files) > len(info.Files) {
-					info, ok = ji, true
+			var info ShareInfo
+			ok := false
+			if len(item.FileInfos) > 0 {
+				// 前端把扫描结果原样带过来了：直接用，完全不依赖服务端缓存
+				info = ShareInfo{Provider: item.Provider, ShareID: item.ShareID, Title: item.Title, Files: item.FileInfos}
+				ok = true
+			} else {
+				info, ok = batchParseCache.get(item.Provider, item.ShareID)
+				// 后台任务手里是最新最全的（缓存每扫完一段才刷新一次）。
+				// 谁的文件多就用谁 —— 否则「扫出几千个、只导入几十个」。
+				if j := dbTaskByShare(item.Provider, item.ShareID); j != nil {
+					if ji := j.asShareInfo(); len(ji.Files) > len(info.Files) {
+						info, ok = ji, true
+					}
 				}
 			}
 			if !ok {
@@ -287,6 +300,8 @@ func apiShareBatchAdd(store *Store, self string) http.HandlerFunc {
 
 			batch := buildShareItems(info, category, showFinal, keep, have, shareRoot)
 			if len(batch) == 0 {
+				log.Printf("[批量导入] %s/%s 空批次：缓存 %d 个文件，keep=%d，have=%d，show=%q",
+					info.Provider, info.ShareID, len(info.Files), len(keep), len(have), showFinal)
 				if have != nil {
 					rr.OK, rr.Skipped = true, true // 真的齐了，没有缺集
 				} else {

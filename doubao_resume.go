@@ -35,7 +35,10 @@ type dbScanState struct {
 	Queue   []dbScanJob `json:"queue"`
 	Seen    []string    `json:"seen"`
 	Files   []ShareFile `json:"files"`
-	SavedAt int64       `json:"saved_at"`
+	// Soft 连续软限流次数：限流不算失败（等会儿接着扫），但要有个头，
+	// 否则一直限流会变成无限重试。
+	Soft    int   `json:"soft,omitempty"`
+	SavedAt int64 `json:"saved_at"`
 }
 
 var (

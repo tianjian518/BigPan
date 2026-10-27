@@ -685,7 +685,7 @@ func scanDoubaoShareNode(cli *Doubao, slot, shareID, nodeID, prefix string, budg
 		}
 		return &dbScanState{
 			Key: key, Title: prefix, Queue: append([]job(nil), queue...),
-			Seen: ids, Files: files,
+			Seen: ids, Files: files, Soft: st.Soft,
 		}
 	}
 
@@ -700,13 +700,37 @@ func scanDoubaoShareNode(cli *Doubao, slot, shareID, nodeID, prefix string, budg
 		}
 		j := queue[0]
 		queue = queue[1:]
-		list, err := cli.dbShareListDir(shareID, j.ID)
+		// 撞限流不认输：先等一会儿重试同一个目录（间隔已被自适应放大，
+		// 这里再叠一层退避）。限流是暂时的，不该让整趟扫描报销。
+		var list []dbNode
+		var err error
+		for attempt := 0; ; attempt++ {
+			list, err = cli.dbShareListDir(shareID, j.ID)
+			if err == nil || !dbSoftThrottle(err) || attempt >= 3 {
+				break
+			}
+			wait := time.Duration(4<<attempt) * time.Second // 4s / 8s / 16s
+			log.Printf("[豆包] 限流，等 %v 后重试当前目录（第 %d 次）：%s", wait, attempt+1, j.Prefix)
+			time.Sleep(wait)
+			if budget > 0 && time.Now().After(deadline) {
+				break
+			}
+		}
 		if err != nil {
 			queue = append([]job{j}, queue...) // 正在扫的这个不能丢
+			st.Soft++
 			dbScanPut(snapshot())
+			if dbSoftThrottle(err) && st.Soft < 6 {
+				// 软失败：返回「还有活没干完」，任务循环会接着扫，
+				// 前端只看到数字在慢慢涨，不会有红色报错。
+				log.Printf("[豆包] 仍在限流，稍后自动续扫（%s，已扫 %d 个目录 / %d 个视频，第 %d 次）",
+					prefix, len(seen), len(files), st.Soft)
+				return files, true, nil
+			}
 			return files, false, fmt.Errorf("豆包限流了（请求太密，不是文件出错）。已扫到 %d 个目录 / %d 个视频，进度已保存。\n等 3~5 分钟再点一次「导入」，会从这里接着扫。\n原始信息：%w",
 				len(seen), len(files), err)
 		}
+		st.Soft = 0
 		for _, n := range list {
 			p := n.Name
 			if j.Prefix != "" {
@@ -872,6 +896,64 @@ func libHasDir(store *Store, providerName, dir string) bool {
 		}
 	}
 	return false
+}
+
+// apiDoubaoShareScan POST {link,node_id,path} → **只扫不入库**，给导入页预览用。
+//
+// 关键：扫描放后台跑，接口立刻返回 job，前端轮询 /api/share/parse/status。
+// 为什么不能同步扫：instabox 网关 20 秒就断（实测 502），一个目录动辄扫 1~5 分钟，
+// 同步接口必挂。
+func apiDoubaoShareScan(as *AccountStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Link   string `json:"link"`
+			NodeID string `json:"node_id"`
+			Path   string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NodeID == "" {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "参数错误"})
+			return
+		}
+		dp, ok := findProvider(strings.TrimSpace(req.Link)).(doubaoProvider)
+		if !ok {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "这不是豆包分享链接"})
+			return
+		}
+		shareID, err := parseDoubaoLink(strings.TrimSpace(req.Link))
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		if _, e := strconv.ParseInt(req.NodeID, 10, 64); e != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "目录标识无效，请回根目录重新进入"})
+			return
+		}
+		cli := dp.client(as)
+		if cli == nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": providerCN(dp.Name()) + " 还没粘 Cookie"})
+			return
+		}
+		prefix := strings.Trim(filepath.ToSlash(strings.TrimSpace(req.Path)), "/")
+		name := prefix
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
+		}
+		title := safeFilename(stripScrape(cleanShareTitle(name)))
+		if title == "" {
+			title = "未命名"
+		}
+		key := "snode|" + dp.Name() + "|" + shareID + "|" + req.NodeID
+		if dbTaskGet(key) == nil {
+			slot, sid, pfx := dp.Name(), shareID, prefix
+			dbTaskStart(key, slot, sid, title, nil, func() (string, []ShareFile, bool, error) {
+				files, pending, e := scanDoubaoShareNode(cli, slot, sid, req.NodeID, pfx, 45*time.Second)
+				return title, files, pending, e
+			})
+		}
+		writeJSON(w, map[string]interface{}{
+			"ok": true, "job": key, "provider": dp.Name(), "share_id": shareID, "title": title,
+		})
+	}
 }
 
 // apiDoubaoShareImport POST {link,node_id,path,category?} → 只导这一个子目录。

@@ -658,11 +658,16 @@ func apiShares(store *Store) http.HandlerFunc {
 				it.AutoRefresh = m.AutoRefresh
 				it.FailCount = m.FailCount
 				it.LastError = m.LastError
-				if m.Show != "" {
-					it.ShowName = m.Show
-				}
-				if m.Category != "" {
-					it.Category = m.Category
+				// 【只在整分享导入时】用登记里的剧名/分类。
+				// 按目录分出来的行（Group 非空）各用各的目录名 —— 否则
+				// 六个目录会全叫第一次导入的那个名字（用户看到的"没反应"）。
+				if s.Group == "" {
+					if m.Show != "" {
+						it.ShowName = m.Show
+					}
+					if m.Category != "" {
+						it.Category = m.Category
+					}
 				}
 			}
 			out = append(out, it)
